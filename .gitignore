@@ -138,3 +138,5 @@ output/
 obsolete/
 *.egg-info
 simulation_configs
+old_notebook
+notebook

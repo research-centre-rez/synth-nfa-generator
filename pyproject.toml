@@ -52,8 +52,6 @@ dependencies = [
   "pandas",
   "scipy",
   "scikit-image",
-  "bezier",
-  "perlin-numpy@git+https://github.com/jaroslavknotek/perlin-numpy.git"
 ]
 
 # List additional groups of dependencies here (e.g. development
