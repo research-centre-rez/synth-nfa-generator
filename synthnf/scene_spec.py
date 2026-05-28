@@ -5,7 +5,7 @@ import numpy as np
 MaterialSpec = object
 
 @dataclass(frozen=True)
-class RoughConductorSpec:
+class MaterialRoughConductorSpec:
     alpha_u:float = .1
     alpha_v:float = .1
         
@@ -15,6 +15,9 @@ class MaterialBSDFSpec:
     g:float = 0
     b:float = 1
 
+    def to_rgb_tuple(self):
+        return self.r,self.g,self.b
+
 @dataclass(frozen=True)
 class MaterialOxideLayer:
     gray_scale:float = .3
@@ -22,13 +25,33 @@ class MaterialOxideLayer:
 @dataclass(frozen=True)
 class MaterialNamedAnyConductorSpec:
     conductor_name:str = "custom_Zircon"
-    rough_conductor_spec:RoughConductorSpec|None = None
+    rough_conductor_spec:MaterialRoughConductorSpec|None = None
     
 @dataclass(frozen=True)
 class MaterialOxidizedConductor: # TODO implement non-homogenous
     conductor_spec:MaterialNamedAnyConductorSpec = MaterialNamedAnyConductorSpec()
     oxidation_spec:MaterialOxideLayer = MaterialOxideLayer()
     oxidation_amount:float = .1
+
+
+@dataclass(frozen=True)
+class MediumRandomGridVolumeSpec:
+    resolution:int = 64
+    density:float = 0.03 #water
+    heterogenity_noise_max:float = 0.1
+    smooth_sigma:float = 5 # in respect to resolution
+    # at this point it's just a cube
+    cube_width:int = 1
+    centered_to_origin:bool=True
+    
+@dataclass(frozen=True)
+class HeterogenousMediumSpec:
+    # params represent murky water
+    albedo:MaterialBSDFSpec=MaterialBSDFSpec(r=.8,g=.85,b=.95) 
+    hg_phase_g:float=.75
+    scale:float = 1
+    volume_spec:MediumRandomGridVolumeSpec=MediumRandomGridVolumeSpec()
+    
 
 @dataclass(frozen=True)
 class FuelRodSpec:
@@ -109,7 +132,7 @@ class NfaSpec:
     
 
 @dataclass
-class PerpectiveSensorSpec:
+class PerspectiveSensorSpec:
     lookat_origin_xyz:tuple[float,float,float]
     lookat_up_xyz:tuple[float,float,float] = (0,0,1)
     lookat_target_xyz:tuple[float,float,float] = (0,0,0)
@@ -130,7 +153,7 @@ class PanelEmitterSpec:
 
 @dataclass
 class GenericCameraRingSpec():
-    sensor_specs:list[PerpectiveSensorSpec]
+    sensor_specs:list[PerspectiveSensorSpec]
     emitter_specs:list[PanelEmitterSpec]
 
     @staticmethod
@@ -147,23 +170,25 @@ class GenericCameraRingSpec():
         
         emitter_left = PanelEmitterSpec(lookat_origin_xyz = (x-light_offset/2,y,z),intensity=light_intensity)
         emitter_right = PanelEmitterSpec(lookat_origin_xyz = (x+light_offset/2,y,z),intensity=light_intensity)
-        main_cam = PerpectiveSensorSpec(lookat_origin_xyz= (x,y,z),field_of_view= field_of_view)
+        main_cam = PerspectiveSensorSpec(lookat_origin_xyz= (x,y,z),field_of_view= field_of_view)
         return GenericCameraRingSpec(
             sensor_specs = [main_cam],
             emitter_specs = [emitter_left,emitter_right]
         )
 
 class AhlbergCameraRingSpec():
-    sensor_specs:list[PerpectiveSensorSpec]
+    sensor_specs:list[PerspectiveSensorSpec]
     emitter_specs:list[PanelEmitterSpec]
 
     @staticmethod
     def single_cam_four_x_lights(
         square_width:float = 900, 
         ring_z:float = 0,
-        field_of_view:float = 25.88, 
+        field_of_view:float = 23, 
         light_intensity = 1000,
         light_height_offset = 50,
+        resolution_x = 1600,
+        resolution_y= 900
     ):
         hf = square_width/2
 
@@ -186,9 +211,12 @@ class AhlbergCameraRingSpec():
             for x,y in emmiter_origins
         ]
         
-        main_cam = PerpectiveSensorSpec(
+        main_cam = PerspectiveSensorSpec(
             lookat_origin_xyz= (0,-hf,ring_z),
-            field_of_view= field_of_view
+            field_of_view= field_of_view,
+            resolution_x = resolution_x,
+            resolution_y=resolution_y,
+            
         )
         return GenericCameraRingSpec(
             sensor_specs = [main_cam],
@@ -210,8 +238,8 @@ class InspectionScene:
     nfa_spec:NfaSpec
     cam_ring_spec:GenericCameraRingSpec
     env_map_spec:EnvironmentMapSpec|None = None 
-    global_illumination:GlobalIlluminationSpec|None = None
-
+    global_illumination_spec:GlobalIlluminationSpec|None = None
+    medium_spec:HeterogenousMediumSpec|None = None
 
 def array_rectangle_grid(
     column_number,
