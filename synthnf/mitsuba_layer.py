@@ -1,12 +1,16 @@
 import pandas as pd
+import scipy.ndimage as ndi
 from typing import Any
 import synthnf.assets as assets
 import synthnf.scene_spec as ss
+import synthnf.scene_variation as sv
 import drjit as dr
 import mitsuba as mi
 import numpy as np
 import numpy.typing as npt
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
+import json
+from datetime import datetime
 
 InstanceMask =npt.NDArray
 Image = npt.NDArray
@@ -20,7 +24,6 @@ class RenderResult:
     label_rgba:Image
     label_instances:InstanceMask
     label_scene:mi.Scene # todo make abstract later
-
 
 @dataclass
 class MitsubaElement:
@@ -41,8 +44,17 @@ class MitsubaElement:
             self.element_key:inner_out_dict
         }
 
-
 @dataclass
+class MitsubaElementCollection:
+    elements:tuple[MitsubaElement,...]
+
+    def to_dict(self):
+        res = {}
+        for e in self.elements:
+            res = res|e.to_dict()
+        return res
+
+@dataclass(frozen=True)
 class MitsubaScene:
     rods:list[MitsubaElement]
     rods_shared_material: MitsubaElement
@@ -50,22 +62,46 @@ class MitsubaScene:
     emitters:list[MitsubaElement]
     env_map:MitsubaElement|None=None
     global_illumination:MitsubaElement|None=None
+    medium:MitsubaElement|None=None
     
     def to_scene_dict(self):
         scene_dict = {
             "type":"scene",
-            "integrator":{"type":"path"}
         }
+
+        if self.medium is not None:
+            scene_dict["integrator"]={
+                "type": "volpathmis",
+                "max_depth": 8,
+                "rr_depth": 5,
+            }
+        else:
+            scene_dict["integrator"]={"type":"path"}
+
+            
 
         rods_list = [r.to_dict() for r in self.rods]
         merged_rods = {k: v for d in rods_list for k, v in d.items()}
         scene_dict = scene_dict | merged_rods
-        scene_dict = scene_dict | self.rods_shared_material.to_dict()
-        scene_dict = scene_dict | self.main_camera.to_dict()
+        scene_dict = scene_dict| self.rods_shared_material.to_dict()
+        cam_dict = self.main_camera.to_dict()
+        if self.medium is not None:
+            cam_dict[self.main_camera.element_key]["medium_ref"] = {
+                "type": "ref",
+                # TODO this is a huge problem in the future
+                # this assumes that the density is the first argument
+                # I add this reference in the .from_scene... factory method
+                "id": self.medium.elements[0].element_key,
+            }
+
+        scene_dict = scene_dict | cam_dict    
+        
         rods_emitters = [e.to_dict() for e in self.emitters]
         merged_emitters = {k: v for d in rods_emitters for k, v in d.items()}
         scene_dict = scene_dict | merged_emitters
-        
+
+        if self.medium:
+            scene_dict = scene_dict | self.medium.to_dict()
         if self.env_map:
             scene_dict = scene_dict | self.env_map.to_dict()
         if self.global_illumination:
@@ -203,7 +239,7 @@ class MitsubaScene:
                 )
             })
         global_illumination = None
-        if inspection_scene.global_illumination:
+        if inspection_scene.global_illumination_spec:
             global_illumination = MitsubaElement(
                 'global_illumination',
                 {
@@ -215,15 +251,42 @@ class MitsubaScene:
                 }
             )
 
+        medium = None
+        if inspection_scene.medium_spec is not None:
+            medium_content_dict,medium_boundaries_dict = create_medium(
+                inspection_scene.medium_spec,
+                element_name='medium',
+            )
             
+            medium_content = MitsubaElement(
+                'medium',
+                medium_content_dict
+            )
+            medium_boundaries = MitsubaElement(
+                'medium_boundaries',
+                medium_boundaries_dict
+            )
+
+            medium = MitsubaElementCollection((medium_content,medium_boundaries))
+
         return MitsubaScene(
             rods = rods,
             rods_shared_material = material,
             main_camera = main_cam ,
             emitters=emitters,
             env_map=env_map,
-            global_illumination = global_illumination
+            global_illumination = global_illumination,
+            medium = medium
         )
+
+@dataclass
+class PostProcessRenderingVariation:
+    noise_denoise_blend:sv.MultiplicativeScalarUniformVariationSpecs = sv.MultiplicativeScalarUniformVariationSpecs()
+
+    def sample(self, render_result:RenderResult,krng,*keys):
+        alpha = self.noise_denoise_blend.sample(1,krng,*keys)
+
+        return alpha*render_result.denoised_rgba + (1-alpha)*render_result.raw_rgba
 
 
 def to_label_scene(
@@ -346,6 +409,86 @@ def convert_to_mitsuba_material(material_definition,material_id=None):
         definition['id'] = material_id
     return definition
 
+def create_density_grid(
+    grid_resolution:int,
+    smooth_sigma:float,
+    medium_density:float,
+    heterogenity_noise_max:float,
+    grid_seed = 42
+):
+    # TODO this shoul not be finxed
+    rng = np.random.default_rng(grid_seed)
+    
+    xyz_res = [grid_resolution]*3
+    noise = rng.random(xyz_res).astype(np.float32)
+    noise = ndi.gaussian_filter(noise, sigma=smooth_sigma)
+    
+    # Normalize to 0..1
+    noise -= noise.min()
+    noise /= noise.max()
+    
+    # Add base water density plus turbulent variation
+    density = medium_density + heterogenity_noise_max * noise
+    
+    # Mitsuba expects a 4D grid: X, Y, Z, channels
+    density_grid = density[..., None]
+    return mi.VolumeGrid(mi.TensorXf(density_grid))
+
+
+def create_medium(
+    heterogenous_medium_spec:ss.HeterogenousMediumSpec,
+    element_name = 'medium',
+):
+    volume_spec = heterogenous_medium_spec.volume_spec
+    density_grid = create_density_grid(
+        volume_spec.resolution,
+        volume_spec.smooth_sigma,
+        volume_spec.density,
+        volume_spec.heterogenity_noise_max
+    )
+
+    grid_to_world = mi.ScalarTransform4f.scale([volume_spec.cube_width]*3)
+    
+    if volume_spec.centered_to_origin:
+        grid_to_world = mi.ScalarTransform4f.translate([-volume_spec.cube_width/2]*3) @ grid_to_world
+    
+    medium_content = {
+    "type": "heterogeneous",
+        "sigma_t": {
+                "type": "gridvolume",
+                "grid": density_grid,
+                "to_world": grid_to_world
+            },
+    
+
+        "albedo": {
+            "type": "rgb",
+            "value": heterogenous_medium_spec.albedo.to_rgb_tuple()
+        },
+    
+        "phase": {
+            "type": "hg",
+            "g": heterogenous_medium_spec.hg_phase_g
+        },
+        "scale":heterogenous_medium_spec.scale
+    }
+    medium_boundaries = {
+        "type": "cube", # it will be cylinder in the future
+        "to_world": grid_to_world,
+    
+        # Index-matched boundary: not visible as a surface.
+        "bsdf": {
+            "type": "null"
+        },            
+        "interior": {
+            "type": "ref",
+            "id": "medium" # this will be problem if it changes name
+        }
+    }
+
+    return medium_content,medium_boundaries
+    
+    
 
 def srgb_bitmap(arr):
     if arr is None:
@@ -357,3 +500,39 @@ def srgb_bitmap(arr):
         srgb_gamma=True
     )
     return np.array(bmp)
+
+
+
+def clean_rod_mask_jittering(mask):
+    m = ndi.binary_opening(mask,np.ones((mask.shape[0]//2,1)))
+    return mask * m
+    
+def unsafe_read_labels(label_instances):
+    unique_vals = np.unique(label_instances)
+    base = np.zeros_like(label_instances)
+    max_idx = np.minimum(len(unique_vals)-1,17)
+    masks = np.array([((label_instances == unique_vals[1+i])*(i+1))     for i in range(max_idx)])
+
+    areas = np.array([np.sum(m>0) for m in masks])
+    med = np.median(areas)
+    
+    good_areas = (med*.9 < areas) &(areas < med*1.1)
+    filtered_areas = masks[good_areas]
+    
+    for mask in filtered_areas:
+        base += mask
+
+    return clean_rod_mask_jittering(base)
+
+def dump_scene_params(inspection_scene,filename):
+    dict_serialized_scene = asdict(inspection_scene)
+    scene_parameters = {
+        "scene":dict_serialized_scene,
+        "timestamp":datetime.now().strftime("%Y%m%d-%H:%M:%S"),
+        "note":""
+    }
+    
+    with open(filename,'w') as f:
+        json.dump(scene_parameters,f)
+
+        

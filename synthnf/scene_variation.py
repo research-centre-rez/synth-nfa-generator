@@ -103,18 +103,32 @@ class FuelRodVariationParams:
         )
 
 
+@dataclass(frozen=True)
+class MaterialRoughConductorVariation:
+    alpha_u:MultiplicativeScalarUniformVariationSpecs=MultiplicativeScalarUniformVariationSpecs()
+    alpha_v:MultiplicativeScalarUniformVariationSpecs=MultiplicativeScalarUniformVariationSpecs()
+
+    def sample(self,rough_conductor_spec:ss.MaterialRoughConductorSpec|None,krng,*keys):
+        if rough_conductor_spec is None:
+            return None
+        return replace(
+            rough_conductor_spec,
+            alpha_u = self.alpha_u.sample(rough_conductor_spec.alpha_u,krng,'u',*keys),
+            alpha_v = self.alpha_v.sample(rough_conductor_spec.alpha_v,krng,'v',*keys)
+        )
 
 @dataclass(frozen=True)
 class MaterialConductorVariation:
     conductor_name:ChoiceVariationParams = ChoiceVariationParams()
-    #TODO rough_conductor_spec:RoughConductorSpec|None = None
+    rough_conductor_variation:MaterialRoughConductorVariation=MaterialRoughConductorVariation()
 
     def sample(self,rods_material_spec:ss.MaterialSpec,krng,*keys)->ss.MaterialSpec:
         if isinstance(rods_material_spec ,ss.MaterialNamedAnyConductorSpec):
+            
             return replace(
                 rods_material_spec,
-                conductor_name = self.conductor_name.sample(rods_material_spec,krng,'name',*keys)
-                #rough_conductor_spec
+                conductor_name = self.conductor_name.sample(rods_material_spec,krng,'name',*keys),
+                rough_conductor_spec = self.rough_conductor_variation.sample(rods_material_spec.rough_conductor_spec,krng,'rough',*keys)
             )
         else:
             warnings.warn("Base variation cannot vary non-conductor material")
@@ -130,12 +144,34 @@ class MaterialOxidizedConductorVariation:
     #TODO heterogenous
 
     def sample(self,oxidized_conductor:ss.MaterialOxidizedConductor, krng,*keys):
+        ox = self.oxidation_amount.sample(oxidized_conductor.oxidation_amount,krng,'oxide_amount',*keys)
+        ox = np.clip(ox,0,1)
+        
         return replace(
             oxidized_conductor,
             conductor_spec = self.conductor_variation.sample(oxidized_conductor.conductor_spec, krng,'cond_spec',*keys),
-            oxidation_amount = self.oxidation_amount.sample(oxidized_conductor.oxidation_amount,krng,'oxide_amount',*keys),
+            oxidation_amount = ox,
             #oxidation_spec=
         )
+
+class DummyVar:
+    def sample(self,any_spec:Any, krng,*keys):
+        return any_spec
+        
+def zip_specifications_w_variations(specs,variations):
+    # you shouldn't have more variations than specifiations
+    s_n = len(specs)
+    v_n = len(variations)
+    if s_n > v_n:
+        dummy = DummyVar()
+        variations = variations  + [dummy]*(s_n - v_n)
+    elif s_n < v_n:
+        # throw warning maybe?
+        variations = variations[:s_n]
+        
+    return  enumerate(zip(specs,variations))
+
+
     
 @dataclass(frozen=True)
 class NfaVariationParams:
@@ -148,8 +184,8 @@ class NfaVariationParams:
         return replace(
             nfa_spec,
             rods_specs = [ 
-                ((var.sample(spec, krng,f'rod_{i}','rod_spec',*keys)) if var else spec) 
-                for i,(spec,var) in enumerate(itertools.zip_longest(nfa_spec.rods_specs,self.rods_variations))
+                var.sample(spec, krng,f'rod_{i}','rod_spec',*keys)
+                for i,(spec,var) in zip_specifications_w_variations(nfa_spec.rods_specs, self.rods_variations)
             ],
             rods_material_spec = self.rods_material_variation.sample(nfa_spec.rods_material_spec,krng,'mat',*keys)
         )
@@ -163,32 +199,57 @@ class EmitterVariation:
     panel_width:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
     panel_height:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
 
-    def sample(self,emitter_specs:ss.PanelEmitterSpec,krng,*keys)->ss.PanelEmitterSpec:
-        new_lookat_origin_xyz = tuple(self.lookat_origin_xyz.sample(emitter_specs.lookat_origin_xyz ,krng,'lookat_origin_xyz',*keys))
-        new_lookat_up_xyz = tuple(self.lookat_up_xyz.sample(emitter_specs.lookat_up_xyz ,krng,'lookat_up_xyz',*keys))
-        new_lookat_target_xyz = tuple(self.lookat_target_xyz.sample(emitter_specs.lookat_target_xyz ,krng,'lookat_target_xyz',*keys))
+    def sample(self,emitter_spec:ss.PanelEmitterSpec,krng,*keys)->ss.PanelEmitterSpec:
+        new_lookat_origin_xyz = tuple(self.lookat_origin_xyz.sample(emitter_spec.lookat_origin_xyz ,krng,'lookat_origin_xyz',*keys))
+        new_lookat_up_xyz = tuple(self.lookat_up_xyz.sample(emitter_spec.lookat_up_xyz ,krng,'lookat_up_xyz',*keys))
+        new_lookat_target_xyz = tuple(self.lookat_target_xyz.sample(emitter_spec.lookat_target_xyz ,krng,'lookat_target_xyz',*keys))
         return replace(
-            emitter_specs,
+            emitter_spec,
             lookat_origin_xyz = new_lookat_origin_xyz,
-            intensity = self.intensity.sample(emitter_specs.intensity,krng,'intensity',*keys),
+            intensity = self.intensity.sample(emitter_spec.intensity,krng,'intensity',*keys),
             lookat_up_xyz = new_lookat_up_xyz,
             lookat_target_xyz = new_lookat_target_xyz,
-            panel_width=self.panel_width.sample(emitter_specs.panel_width, krng,'panel_width',*keys),
-            panel_height=self.panel_height.sample(emitter_specs.panel_height, krng,'panel_height',*keys),
+            panel_width=self.panel_width.sample(emitter_spec.panel_width, krng,'panel_width',*keys),
+            panel_height=self.panel_height.sample(emitter_spec.panel_height, krng,'panel_height',*keys),
         )
-        
+
+@dataclass
+class PerspectiveSensorVariation:
+    lookat_origin_xyz:AdditiveXyzUniformVariationSpecs = AdditiveXyzUniformVariationSpecs()
+    lookat_up_xyz:AdditiveXyzUniformVariationSpecs = AdditiveXyzUniformVariationSpecs()
+    lookat_target_xyz:AdditiveXyzUniformVariationSpecs=AdditiveXyzUniformVariationSpecs()
+
+    field_of_view:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
+
+    def sample(self,sensor_spec:ss.PerspectiveSensorSpec,krng,*keys)->ss.PerspectiveSensorSpec:
+        new_lookat_origin_xyz = tuple(self.lookat_origin_xyz.sample(sensor_spec.lookat_origin_xyz ,krng,'lookat_origin_xyz',*keys))
+        new_lookat_up_xyz = tuple(self.lookat_up_xyz.sample(sensor_spec.lookat_up_xyz ,krng,'lookat_up_xyz',*keys))
+        new_lookat_target_xyz = tuple(self.lookat_target_xyz.sample(sensor_spec.lookat_target_xyz ,krng,'lookat_target_xyz',*keys))
+        return replace(
+            sensor_spec,
+            lookat_origin_xyz = new_lookat_origin_xyz,
+            lookat_up_xyz = new_lookat_up_xyz,
+            lookat_target_xyz = new_lookat_target_xyz,
+            field_of_view = self.field_of_view.sample(sensor_spec.field_of_view,krng,'fov',*keys),
+        )
+            
+
 @dataclass
 class CamRingVariationParams:
     emitter_variations:tuple[EmitterVariation,...]
+    sensor_variation:tuple[PerspectiveSensorVariation,...]
 
     def sample(self,cam_ring_spec:ss.GenericCameraRingSpec,krng,*keys):
         return replace(
             cam_ring_spec,
             emitter_specs = [ 
-                ((var.sample(spec, krng,f'emmiter_{i}',*keys)) if var else spec) 
-                for i,(spec,var) in enumerate(itertools.zip_longest(cam_ring_spec.emitter_specs,self.emitter_variations))
+                var.sample(spec, krng,f'emitter_{i}',*keys)
+                for i,(spec,var) in zip_specifications_w_variations(cam_ring_spec.emitter_specs,self.emitter_variations)
             ],
-            sensor_specs = cam_ring_spec.sensor_specs # TODO add variations
+            sensor_specs =  [
+                var.sample(spec, krng,f'sensor_{i}',*keys)
+                for i,(spec,var) in zip_specifications_w_variations(cam_ring_spec.sensor_specs,self.sensor_variation)
+            ],
         )
 
 @dataclass(frozen=True)
@@ -196,11 +257,13 @@ class EnvironmentMapVariationParams:
     intensity_scale:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
     env_map_file:ChoiceVariationParams = ChoiceVariationParams()
     rot_left_right_angle:AdditiveScalarUniformVariationSpecs=AdditiveScalarUniformVariationSpecs(0,0)
-    
+
     def sample(self,env_map_spec:ss.EnvironmentMapSpec, krng,*keys):
+        intensity = self.intensity_scale.sample(env_map_spec.intensity_scale,krng,"intensity",*keys)
+        intensity = np.maximum(intensity,0)
         return replace(
             env_map_spec,
-            intensity_scale = self.intensity_scale.sample(env_map_spec.intensity_scale,krng,"intensity",*keys),
+            intensity_scale = intensity,
             env_map_file = self.env_map_file.sample("DUMMY NON USED VALUE", krng,"env_map",*keys),
             rot_left_right_angle = self.rot_left_right_angle.sample(env_map_spec.rot_left_right_angle,krng,"lr_rot",*keys),
         )
@@ -245,8 +308,8 @@ class InspectionVariationParams:
                 'env_map',
                 *keys,
             ),
-            global_illumination = self.global_illumination_variation.sample(
-                inspection_scene.global_illumination,
+            global_illumination_spec = self.global_illumination_variation.sample(
+                inspection_scene.global_illumination_spec,
                 krng,
                 'gl',
                 *keys
