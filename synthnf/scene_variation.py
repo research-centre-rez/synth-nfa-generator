@@ -47,6 +47,13 @@ def stable_hash(*parts: Any, digest_size: int = 16) -> int:
 
     return int.from_bytes(h.digest(), "little")
 
+@dataclass(frozen=True)
+class ChanceBoolVariation:
+    success_probability:float = 1
+
+    def sample(self,_,krng,*keys):
+        u = krng.uniform(0,1,'chance',*keys)
+        return u<self.success_probability
 
 @dataclass(frozen=True)
 class AdditiveScalarUniformVariationSpecs:
@@ -67,7 +74,7 @@ class MultiplicativeScalarUniformVariationSpecs:
         return base*v
     
 @dataclass(frozen=True)
-class AdditiveXyzUniformVariationSpecs:
+class XyzUniformVariationSpecs:
     x:AdditiveScalarUniformVariationSpecs=AdditiveScalarUniformVariationSpecs()
     y:AdditiveScalarUniformVariationSpecs=AdditiveScalarUniformVariationSpecs()
     z:AdditiveScalarUniformVariationSpecs=AdditiveScalarUniformVariationSpecs()
@@ -76,7 +83,8 @@ class AdditiveXyzUniformVariationSpecs:
         return np.array([
             var.sample(b,krng,k,*keys) 
             for b,var,k in zip(base,[self.x,self.y,self.z],"xyz")
-        ])    
+        ])   
+        
 @dataclass(frozen=True)
 class ChoiceVariationParams:
     options:tuple[str,...] = ()
@@ -89,7 +97,7 @@ class ChoiceVariationParams:
         
 @dataclass(frozen=True)
 class FuelRodVariationParams:
-    xyz:AdditiveXyzUniformVariationSpecs=AdditiveXyzUniformVariationSpecs()
+    xyz:XyzUniformVariationSpecs=XyzUniformVariationSpecs()
     radius:MultiplicativeScalarUniformVariationSpecs=MultiplicativeScalarUniformVariationSpecs()
     height:MultiplicativeScalarUniformVariationSpecs=MultiplicativeScalarUniformVariationSpecs()
 
@@ -102,6 +110,18 @@ class FuelRodVariationParams:
             xyz = new_xyz
         )
 
+@dataclass(frozen=True)
+class SpacerGridVariation:
+    #tooth_type - plain and complex
+    z_location:AdditiveScalarUniformVariationSpecs=AdditiveScalarUniformVariationSpecs()
+    enabled:ChanceBoolVariation = ChanceBoolVariation(1)
+
+    def sample(self, grid_spec:ss.SpacerGridSpec, krng,*keys):
+        return replace(
+            grid_spec,
+            z_location = self.z_location.sample(grid_spec.z_location,krng,"z_loc",*keys),
+            enabled = self.enabled.sample(None, krng,"enabled",*keys),
+        )
 
 @dataclass(frozen=True)
 class MaterialRoughConductorVariation:
@@ -176,26 +196,45 @@ def zip_specifications_w_variations(specs,variations):
 @dataclass(frozen=True)
 class NfaVariationParams:
     rods_variations:tuple[FuelRodVariationParams,...] = () # Variation per rod, not ideal at the moment
+    grids_variations:tuple[SpacerGridVariation,...] = ()
     rods_material_variation:MaterialOxidizedConductorVariation = MaterialOxidizedConductorVariation()
+    grids_material_variation:MaterialOxidizedConductorVariation = MaterialOxidizedConductorVariation()
     # Do I want to vary gloal offsets and stuff, those params are 
     # not translated to scene so no I don't want to do it now
 
     def sample(self,nfa_spec:ss.NfaSpec,krng,*keys):
+        if nfa_spec is None:
+            return nfa_spec
         return replace(
             nfa_spec,
             rods_specs = [ 
                 var.sample(spec, krng,f'rod_{i}','rod_spec',*keys)
                 for i,(spec,var) in zip_specifications_w_variations(nfa_spec.rods_specs, self.rods_variations)
             ],
-            rods_material_spec = self.rods_material_variation.sample(nfa_spec.rods_material_spec,krng,'mat',*keys)
+            grids_specs = [ 
+                var.sample(spec, krng,f'grid_{i}','grids_spec',*keys)
+                for i,(spec,var) in zip_specifications_w_variations(nfa_spec.grids_specs, self.grids_variations)
+            ],
+            rods_material_spec = self.rods_material_variation.sample(
+                nfa_spec.rods_material_spec,
+                krng,
+                'mat',
+                *keys,
+            ),
+            grids_material_spec = self.grids_material_variation.sample(
+                nfa_spec.grids_material_spec,
+                krng,
+                'grid_mat',
+                *keys,
+            )
         )
 
 @dataclass
 class EmitterVariation:
-    lookat_origin_xyz:AdditiveXyzUniformVariationSpecs = AdditiveXyzUniformVariationSpecs()
+    lookat_origin_xyz:XyzUniformVariationSpecs = XyzUniformVariationSpecs()
     intensity:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
-    lookat_up_xyz:AdditiveXyzUniformVariationSpecs = AdditiveXyzUniformVariationSpecs()
-    lookat_target_xyz:AdditiveXyzUniformVariationSpecs=AdditiveXyzUniformVariationSpecs()
+    lookat_up_xyz:XyzUniformVariationSpecs = XyzUniformVariationSpecs()
+    lookat_target_xyz:XyzUniformVariationSpecs=XyzUniformVariationSpecs()
     panel_width:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
     panel_height:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
 
@@ -215,9 +254,9 @@ class EmitterVariation:
 
 @dataclass
 class PerspectiveSensorVariation:
-    lookat_origin_xyz:AdditiveXyzUniformVariationSpecs = AdditiveXyzUniformVariationSpecs()
-    lookat_up_xyz:AdditiveXyzUniformVariationSpecs = AdditiveXyzUniformVariationSpecs()
-    lookat_target_xyz:AdditiveXyzUniformVariationSpecs=AdditiveXyzUniformVariationSpecs()
+    lookat_origin_xyz:XyzUniformVariationSpecs = XyzUniformVariationSpecs()
+    lookat_up_xyz:XyzUniformVariationSpecs = XyzUniformVariationSpecs()
+    lookat_target_xyz:XyzUniformVariationSpecs=XyzUniformVariationSpecs()
 
     field_of_view:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
 
@@ -281,11 +320,41 @@ class GlobalIlluminationVariation:
         )
 
 @dataclass(frozen=True)
+class HeterogenousMediumVariation:
+    albedo:XyzUniformVariationSpecs=XyzUniformVariationSpecs()
+    hg_phase_g:MultiplicativeScalarUniformVariationSpecs=MultiplicativeScalarUniformVariationSpecs()
+    scale:MultiplicativeScalarUniformVariationSpecs=MultiplicativeScalarUniformVariationSpecs()
+    enabled:ChanceBoolVariation=ChanceBoolVariation()
+
+    def sample(self,spec: ss.HeterogenousMediumSpec,krng,*keys):
+        if spec is None:
+            return None
+        if not isinstance(spec, ss.HeterogenousMediumSpec):
+            raise RuntimeError(f"Heterogenous Medium variaion canot vary specification of type {type(spec)}")
+
+        xyz = np.array([spec.albedo.r,spec.albedo.g,spec.albedo.b])
+        albedo_xyz = self.albedo.sample(xyz, krng, "albedo",*keys)
+        albedo_bsdf = ss.MaterialBSDFSpec(
+            r=  albedo_xyz[0],
+            g=albedo_xyz[1],
+            b=albedo_xyz[2],
+        )
+        
+        return replace(
+            spec,
+            albedo = albedo_bsdf,
+            hg_phase_g = self.hg_phase_g.sample(spec.hg_phase_g, krng ,"hg-phase_g", *keys),
+            scale = self.scale.sample(spec.scale,krng,"scale",*keys),
+            enabled = self.enabled.sample(None, krng,"med_enabled",*keys)
+        )
+
+@dataclass(frozen=True)
 class InspectionVariationParams:
     nfa_variation:NfaVariationParams
     cam_ring_variation:CamRingVariationParams
     env_map_variation:EnvironmentMapVariationParams = EnvironmentMapVariationParams()
     global_illumination_variation:GlobalIlluminationVariation = GlobalIlluminationVariation()
+    medium_variation:HeterogenousMediumVariation = HeterogenousMediumVariation()
     
     def sample(self,inspection_scene:ss.InspectionScene,krng,*keys):
         return replace(
@@ -312,6 +381,12 @@ class InspectionVariationParams:
                 inspection_scene.global_illumination_spec,
                 krng,
                 'gl',
+                *keys
+            ),
+            medium_spec = self.medium_variation.sample(
+                inspection_scene.medium_spec,
+                krng,
+                'medium',
                 *keys
             )
         )
