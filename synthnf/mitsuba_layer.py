@@ -58,6 +58,8 @@ class MitsubaElementCollection:
 class MitsubaScene:
     rods:list[MitsubaElement]
     rods_shared_material: MitsubaElement
+    grids:list[MitsubaElement]
+    grids_shared_material: MitsubaElement
     main_camera:MitsubaElement
     emitters:list[MitsubaElement]
     env_map:MitsubaElement|None=None
@@ -84,6 +86,7 @@ class MitsubaScene:
         merged_rods = {k: v for d in rods_list for k, v in d.items()}
         scene_dict = scene_dict | merged_rods
         scene_dict = scene_dict| self.rods_shared_material.to_dict()
+        scene_dict = scene_dict| self.grids_shared_material.to_dict()
         cam_dict = self.main_camera.to_dict()
         if self.medium is not None:
             cam_dict[self.main_camera.element_key]["medium_ref"] = {
@@ -100,12 +103,17 @@ class MitsubaScene:
         merged_emitters = {k: v for d in rods_emitters for k, v in d.items()}
         scene_dict = scene_dict | merged_emitters
 
+        grids = [g.to_dict() for g in self.grids]
+        merged_grids = {k: v for d in grids for k, v in d.items()}
+        scene_dict = scene_dict | merged_grids
+
         if self.medium:
             scene_dict = scene_dict | self.medium.to_dict()
         if self.env_map:
             scene_dict = scene_dict | self.env_map.to_dict()
         if self.global_illumination:
             scene_dict = scene_dict | self.global_illumination.to_dict()
+
         return scene_dict
 
 
@@ -158,22 +166,49 @@ class MitsubaScene:
     
     @staticmethod
     def from_inspection_scene(inspection_scene:ss.InspectionScene):
-        if not inspection_scene.nfa_spec.rods_material_spec:
-            material =  ss.MaterialBSDFSpec()
-        else:
-            material = inspection_scene.nfa_spec.rods_material_spec
+        
+        nfa_spec = inspection_scene.nfa_spec
 
         material_id =  "shared_rod_material"
-        material = MitsubaElement('shared_material', convert_to_mitsuba_material(material,material_id=material_id))
-        rods =[MitsubaElement(f"rod_{i:05}",{
-                'type': 'cylinder',
-                'radius': rod.radius,
-                'p0':np.array(rod.xyz) - [0,0,rod.height/2],
-                'p1':np.array(rod.xyz) + [0,0,rod.height/2],
-                'material':{'type':'ref','id':material_id},
-            }) for i,rod in enumerate(inspection_scene.nfa_spec.rods_specs)
-        ]
+        grids_material_id = "shared_grid_material"
+        material =  ss.MaterialBSDFSpec()
+        grids_material = ss.MaterialBSDFSpec()
+        rods = []
+        grids = []
+        if nfa_spec is not None:
+            if nfa_spec.rods_material_spec is not None:
+                material = nfa_spec.rods_material_spec
+            if nfa_spec.grids_material_spec is not None:
+                grids_material = nfa_spec.grids_material_spec
+            rods =[
+                MitsubaElement(f"rod_{i:05}",{
+                    'type': 'cylinder',
+                    'radius': rod.radius,
+                    'p0':np.array(rod.xyz) - [0,0,rod.height/2],
+                    'p1':np.array(rod.xyz) + [0,0,rod.height/2],
+                    'material':{'type':'ref','id':material_id},
+                }) for i,rod in enumerate(nfa_spec.rods_specs)
+            ]
+            
+            grids = [
+                MitsubaElement(
+                    f'grid_{i:05}',
+                    mitsuba_grid(grid_spec,nfa_spec.rods_shape_spec, material_id = grids_material_id)
+                ) 
+                for i,grid_spec in enumerate(nfa_spec.grids_specs) if grid_spec.enabled
+            ]
+            
 
+        material = MitsubaElement(
+            material_id, 
+            convert_to_mitsuba_material(material,material_id=material_id)
+        )
+
+        grids_material = MitsubaElement(
+            grids_material_id, 
+            convert_to_mitsuba_material(grids_material,material_id = grids_material_id)
+        )
+        
         sens = inspection_scene.cam_ring_spec.sensor_specs[0]
         if len(inspection_scene.cam_ring_spec.sensor_specs) >1:
             warnings.warn("More than 1 camera found. Only the first was used")
@@ -252,7 +287,7 @@ class MitsubaScene:
             )
 
         medium = None
-        if inspection_scene.medium_spec is not None:
+        if inspection_scene.medium_spec is not None and inspection_scene.medium_spec.enabled:
             medium_content_dict,medium_boundaries_dict = create_medium(
                 inspection_scene.medium_spec,
                 element_name='medium',
@@ -272,6 +307,8 @@ class MitsubaScene:
         return MitsubaScene(
             rods = rods,
             rods_shared_material = material,
+            grids = grids,
+            grids_shared_material = grids_material,
             main_camera = main_cam ,
             emitters=emitters,
             env_map=env_map,
@@ -337,6 +374,15 @@ def create_manual_conductor(eta_spectrum, k_spectrum, alpha_u=None, alpha_v=None
 
 
 
+def inconel_conductor(alpha_u=None, alpha_v=None):
+    df_zirconium = pd.read_csv(assets.get_asset_path("spectrum_inconel.csv"))
+    wv = df_zirconium["wavelength"] * 1000
+    n = df_zirconium["n"]
+    eta = df_zirconium["k"]
+    eta_spectrum = list(zip(wv, n))
+    k_spectrum = list(zip(wv, eta))
+    return create_manual_conductor(eta_spectrum, k_spectrum, alpha_u=alpha_u, alpha_v=alpha_v)
+    
 def zirconium_conductor(alpha_u=None, alpha_v=None):
     df_zirconium = pd.read_csv(assets.get_asset_path("spectrum_zirconium.csv"))
     wv = df_zirconium["wavelength"] * 1000
@@ -370,6 +416,12 @@ def convert_to_mitsuba_material(material_definition,material_id=None):
             else:
                 rcs = material_definition.rough_conductor_spec
                 definition = zirconium_conductor(rcs.alpha_u,rcs.alpha_v)
+        elif material_definition.conductor_name == 'custom_Inconel':
+            if material_definition.rough_conductor_spec is None:
+                definition = inconel_conductor()
+            else:
+                rcs = material_definition.rough_conductor_spec
+                definition = inconel_conductor(rcs.alpha_u,rcs.alpha_v)
         else:
             definition = {
                 'material': material_definition.conductor_name
@@ -507,7 +559,7 @@ def clean_rod_mask_jittering(mask):
     m = ndi.binary_opening(mask,np.ones((mask.shape[0]//2,1)))
     return mask * m
     
-def unsafe_read_labels(label_instances):
+def unsafe_read_labels(label_instances,clean_jitter = False):
     unique_vals = np.unique(label_instances)
     base = np.zeros_like(label_instances)
     max_idx = np.minimum(len(unique_vals)-1,17)
@@ -516,13 +568,18 @@ def unsafe_read_labels(label_instances):
     areas = np.array([np.sum(m>0) for m in masks])
     med = np.median(areas)
     
-    good_areas = (med*.9 < areas) &(areas < med*1.1)
+    good_areas = (med*.7 < areas) &(areas < med*1.3)
     filtered_areas = masks[good_areas]
     
-    for mask in filtered_areas:
-        base += mask
+    for i,mask in enumerate(filtered_areas):
+        mask = ndi.binary_opening(mask,np.ones((21,21)))
+        base += mask*(i+1)
+        
 
-    return clean_rod_mask_jittering(base)
+    if clean_jitter:
+        return clean_rod_mask_jittering(base)
+    else:
+        return base
 
 def dump_scene_params(inspection_scene,filename):
     dict_serialized_scene = asdict(inspection_scene)
@@ -535,4 +592,33 @@ def dump_scene_params(inspection_scene,filename):
     with open(filename,'w') as f:
         json.dump(scene_parameters,f)
 
-        
+
+import synthnf.mesh_geometry as mg
+from pathlib import Path
+
+def mitsuba_grid(grid_spec,rods_shape_spec,material_id):
+    # todo base this on settings
+    #tvsat_tooth = Path('../assets/default_tooth.ply')
+    fourface_tooth = Path('../assets/g4face.ply')
+    
+    fourface_tooth_square_scene_el = mg.spacer_grid(
+        fourface_tooth,
+        rods_per_face=rods_shape_spec.row_number,
+        rod_width_mm = rods_shape_spec.rod_radius*2,
+        gap_width_mm= rods_shape_spec.offset - rods_shape_spec.rod_radius*2,
+        material={},
+        is_hexagon = False
+    )
+
+    return {
+        "type": "ply",
+        "filename": fourface_tooth_square_scene_el['filename'],
+        # "face_normals": False,
+        # "flip_normals":False,
+        "to_world": mi.ScalarTransform4f().translate((0,0,grid_spec.z_location)),#.scale((1,1,1)),
+        "material":{"type":"ref","id":material_id},
+        # "bsdf": {
+        #     "type": "conductor",
+        #     "material": "Al",
+        # },
+    }

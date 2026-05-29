@@ -51,6 +51,7 @@ class HeterogenousMediumSpec:
     hg_phase_g:float=.75
     scale:float = 1
     volume_spec:MediumRandomGridVolumeSpec=MediumRandomGridVolumeSpec()
+    enabled:bool = True
     
 
 @dataclass(frozen=True)
@@ -62,22 +63,25 @@ class FuelRodSpec:
 
 @dataclass(frozen=True)
 class RodsHexagonSpec:
-    edge_count:int = 11
+    row_number:int = 11
     offset:int = 12.75
     rod_height:int = 3800
     rod_radius:int = 4.55
     center_z:int = 0
 
     def collect_rods(self)->tuple[FuelRodSpec]:
-        rod_centers = array_hexagon_grid(self.edge_count, self.offset)
+        if self.edge_count == 0:
+            return ()
+            
+        rod_centers = array_hexagon_grid(self.row_number, self.offset)
         xyzs = [ (x,y,self.center_z) for x,y in rod_centers]
-        return [ 
+        return tuple([ 
             FuelRodSpec(
                 xyz = np.array(xyz),
                 radius=self.rod_radius,
                 height=self.rod_height
             ) for xyz in xyzs
-        ]
+        ])
     
 @dataclass
 class RodsSquareSpec:
@@ -89,6 +93,8 @@ class RodsSquareSpec:
     center_z:int = 0
 
     def collect_rods(self)->tuple[FuelRodSpec]:
+        if self.column_number == 0 or self.row_number == 0:
+            return ()
         rod_centers = array_rectangle_grid(
             column_number= self.column_number,
             row_number=self.row_number,
@@ -96,29 +102,38 @@ class RodsSquareSpec:
             offset_columns=self.offset
         )
         xyzs = [ (x,y,self.center_z) for x,y in rod_centers]
-        return [ 
+        return tuple([ 
             FuelRodSpec(
                 xyz = xyz,
                 radius=self.rod_radius,
                 height=self.rod_height
             ) for xyz in xyzs
-        ]
+        ])
 
-
+@dataclass(frozen=True)
+class SpacerGridSpec:
+    #tooth_type - plain and complex
+    z_location:float
+    enabled:bool = True
+    
+    
 @dataclass
 class NfaSpec:
     rods_shape_spec: RodsHexagonSpec|RodsSquareSpec
-    rods_specs:tuple[FuelRodSpec]
+    rods_specs:tuple[FuelRodSpec,...]
+    grids_specs:tuple[SpacerGridSpec,...]
     rods_material_spec:MaterialSpec|None= None
-    # todo grids
+    grids_material_spec:MaterialSpec|None= None
     
     @staticmethod
-    def from_shape(rods_shape_spec, rods_material_spec):
+    def from_shape(rods_shape_spec, rods_material_spec,grids:list[SpacerGridSpec] = [], grids_material_spec:MaterialSpec|None = None):
         rods_specs= rods_shape_spec.collect_rods()
         return NfaSpec(
             rods_shape_spec,
             rods_specs = rods_specs,
-            rods_material_spec= rods_material_spec
+            rods_material_spec= rods_material_spec,
+            grids_material_spec = grids_material_spec,
+            grids_specs = grids
         )
 
     def single_rod(rod_radius,rod_height,rods_material_spec):
@@ -235,8 +250,8 @@ class EnvironmentMapSpec:
     
 @dataclass
 class InspectionScene:
-    nfa_spec:NfaSpec
     cam_ring_spec:GenericCameraRingSpec
+    nfa_spec:NfaSpec|None = None
     env_map_spec:EnvironmentMapSpec|None = None 
     global_illumination_spec:GlobalIlluminationSpec|None = None
     medium_spec:HeterogenousMediumSpec|None = None
