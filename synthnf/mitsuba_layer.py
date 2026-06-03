@@ -1,4 +1,5 @@
 import pandas as pd
+import cv2
 import scipy.ndimage as ndi
 from typing import Any
 import synthnf.assets as assets
@@ -558,28 +559,82 @@ def srgb_bitmap(arr):
 def clean_rod_mask_jittering(mask):
     m = ndi.binary_opening(mask,np.ones((mask.shape[0]//2,1)))
     return mask * m
+
+
+    
+def bbox(img):
+    rows = np.any(img, axis=1)
+    cols = np.any(img, axis=0)
+    ymin, ymax = np.where(rows)[0][[0, -1]]
+    xmin, xmax = np.where(cols)[0][[0, -1]]
+    return (ymin, ymax + 1, xmin, xmax + 1)
+    
     
 def unsafe_read_labels(label_instances,clean_jitter = False):
+    # FILTER RODS COARSE - shape-index-based instances from mitsuba
     unique_vals = np.unique(label_instances)
-    base = np.zeros_like(label_instances)
-    max_idx = np.minimum(len(unique_vals)-1,17)
-    masks = np.array([((label_instances == unique_vals[1+i])*(i+1))     for i in range(max_idx)])
+    
+    rods_instance_mask = np.zeros_like(label_instances)
+    h,w = rods_instance_mask.shape
+    masks = np.array([
+        (label_instances==val)*(i+1) for i,val in enumerate(unique_vals)
+        if val!=0
+    ])
+    widths = np.array([ (b[3]-b[2]) for b in [bbox(m) for m in masks]])
+    heights = np.array([ (b[1]-b[0]) for b in [bbox(m) for m in masks]])
+    good_widths = (widths > 35) & (widths < 200) # & (heights > h*.8)
+    filtered_masks = masks[good_widths][:17]
 
-    areas = np.array([np.sum(m>0) for m in masks])
-    med = np.median(areas)
-    
-    good_areas = (med*.7 < areas) &(areas < med*1.3)
-    filtered_areas = masks[good_areas]
-    
-    for i,mask in enumerate(filtered_areas):
+    for i,mask in enumerate(filtered_masks):
         mask = ndi.binary_opening(mask,np.ones((21,21)))
-        base += mask*(i+1)
+        rods_instance_mask += mask*(i+1)
+
+    
+    # FILTER MASK HERE
+    grid_mask = np.zeros_like(label_instances)
+    
+    possible_grids = np.argwhere((widths > label_instances.shape[1] *.5) & (widths< w))
+    if len(possible_grids) == 1:
+        grid_mask_idx = np.squeeze(possible_grids)
+        grid_mask = masks[grid_mask_idx]
+        grid_mask = ndi.binary_fill_holes(grid_mask)
+
+
+        n,arr,stats,centroids = cv2.connectedComponentsWithStats(np.uint8(grid_mask))
+        
+        # x = stats[i, cv2.CC_STAT_LEFT]
+        # y = stats[i, cv2.CC_STAT_TOP]
+        ws = stats[:, cv2.CC_STAT_WIDTH]
+        hs = stats[:, cv2.CC_STAT_HEIGHT]
+        areas = stats[:, cv2.CC_STAT_AREA]
+        # skip the largest component as it is the background
+        # this is pretty bad assumption
+        grid_mask =  arr == np.argmax((hs*ws)[1:])+1
+
+        # IF MASK IS PRESENT get rid of disconected components
+        # that results from grid spliting the reods
+        
+        n,arr,stats,centroids = cv2.connectedComponentsWithStats(np.uint8(rods_instance_mask>0))
+        rod_cmp_masks = np.array([ (arr == mask_idx) for mask_idx in range(1,n)])
+        ws = stats[:, cv2.CC_STAT_WIDTH].astype(np.float32)
+        # rods is anything above scaled average
+        ws[(ws == arr.shape[1])] = np.nan
+        rod_cmp_filter = (ws > np.nanmean(ws)*.8)
         
 
-    if clean_jitter:
-        return clean_rod_mask_jittering(base)
+        base_mask = np.zeros_like(arr)
+        for i in np.argwhere(rod_cmp_filter):
+            base_mask += (arr == i)
+        rods_instance_mask = rods_instance_mask * base_mask
+        
     else:
-        return base
+        if clean_jitter:
+            rods_instance_mask = clean_rod_mask_jittering(rods_instance_mask)
+        
+
+    return rods_instance_mask, grid_mask
+    
+    
 
 def dump_scene_params(inspection_scene,filename):
     dict_serialized_scene = asdict(inspection_scene)
@@ -597,12 +652,9 @@ import synthnf.mesh_geometry as mg
 from pathlib import Path
 
 def mitsuba_grid(grid_spec,rods_shape_spec,material_id):
-    # todo base this on settings
-    #tvsat_tooth = Path('../assets/default_tooth.ply')
-    fourface_tooth = Path('../assets/g4face.ply')
-    
+    tooth_ply_path = assets.get_asset_path(grid_spec.tooth_ply_filename)
     fourface_tooth_square_scene_el = mg.spacer_grid(
-        fourface_tooth,
+        tooth_ply_path,
         rods_per_face=rods_shape_spec.row_number,
         rod_width_mm = rods_shape_spec.rod_radius*2,
         gap_width_mm= rods_shape_spec.offset - rods_shape_spec.rod_radius*2,

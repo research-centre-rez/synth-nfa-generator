@@ -115,12 +115,13 @@ class SpacerGridVariation:
     #tooth_type - plain and complex
     z_location:AdditiveScalarUniformVariationSpecs=AdditiveScalarUniformVariationSpecs()
     enabled:ChanceBoolVariation = ChanceBoolVariation(1)
-
+    tooth_ply_filename:ChoiceVariationParams = ChoiceVariationParams()
     def sample(self, grid_spec:ss.SpacerGridSpec, krng,*keys):
         return replace(
             grid_spec,
             z_location = self.z_location.sample(grid_spec.z_location,krng,"z_loc",*keys),
             enabled = self.enabled.sample(None, krng,"enabled",*keys),
+            tooth_ply_filename = self.tooth_ply_filename.sample(grid_spec.tooth_ply_filename,krng,"tooth_ply",*keys),
         )
 
 @dataclass(frozen=True)
