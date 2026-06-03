@@ -115,6 +115,7 @@ class SpacerGridSpec:
     #tooth_type - plain and complex
     z_location:float
     enabled:bool = True
+    tooth_ply_filename:str = "g4face.ply"
     
     
 @dataclass
