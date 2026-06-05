@@ -121,8 +121,8 @@ class SpacerGridSpec:
 @dataclass
 class NfaSpec:
     rods_shape_spec: RodsHexagonSpec|RodsSquareSpec
-    rods_specs:tuple[FuelRodSpec,...]
-    grids_specs:tuple[SpacerGridSpec,...]
+    rods_specs:tuple[FuelRodSpec,...] = ()
+    grids_specs:tuple[SpacerGridSpec,...] = ()
     rods_material_spec:MaterialSpec|None= None
     grids_material_spec:MaterialSpec|None= None
     
