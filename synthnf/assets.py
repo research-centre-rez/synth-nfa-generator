@@ -9,6 +9,7 @@ assets_path = (
 
 mitsuba_materials_w_description = {
     "custom_Zircon":"this is my custom zirconium",
+    "custom_Porcelain":"custom porcelain (some oxides look like that)",
     "a-C": "Amorphous carbon",
     "Na_palik": "Sodium",
     "Ag": "Silver",

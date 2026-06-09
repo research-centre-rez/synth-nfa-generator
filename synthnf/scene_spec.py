@@ -28,10 +28,11 @@ class MaterialNamedAnyConductorSpec:
     rough_conductor_spec:MaterialRoughConductorSpec|None = None
     
 @dataclass(frozen=True)
-class MaterialOxidizedConductor: # TODO implement non-homogenous
+class MaterialOxidizedConductor:
     conductor_spec:MaterialNamedAnyConductorSpec = MaterialNamedAnyConductorSpec()
     oxidation_spec:MaterialOxideLayer = MaterialOxideLayer()
     oxidation_amount:float = .1
+    oxide_spots:bool = False # TODO add parametrization
 
 
 @dataclass(frozen=True)
