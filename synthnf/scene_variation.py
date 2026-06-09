@@ -7,18 +7,27 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 class KeyedRNG:
-    def __init__(self, root_seed: int):
-        self.root_seed = root_seed
+    def __init__(self, root_seed: int,digest_size = 16):
+        self.root_seed = root_seed 
+        self._digest_size=digest_size
 
     def unit(self, *keys) -> float:
-        digest_size = 16
-        x = stable_hash(
+        x = self.pythonint(*keys)
+        return x / (1 << (8 * self._digest_size))
+    
+    def pythonint(self,*keys)->int:
+        return stable_hash(
             self.root_seed, *keys,
-            digest_size=digest_size
+            digest_size=self._digest_size
         )
-        return x / (1 << (8 * digest_size))
+    
+    def uint32(self,*keys)->int:
+        return stable_hash(
+            self.root_seed, *keys,
+            digest_size=8
+        ) % (2**32)
 
-    def uniform(self, low,high, *keys) -> float:
+    def uniform(self, low=0,high=1, *keys) -> float:
         u = self.unit(*keys)
         return low + u * (high - low)
 
@@ -26,8 +35,11 @@ class KeyedRNG:
         idx = int(krng.uniform(0,len(options),*keys))
         return options[idx]
 
-    # def uniform_list(self,specs,*keys) -> list[float]:
-    #     return [self.uniform(spec,i,*keys) for i,spec in enumerate(specs)]
+    def uniform_list(self,size,low=0,high=1,*keys) -> list[float]:
+        return np.array([
+            self.uniform(low,high, i,*keys) 
+            for i in np.arange(size)
+        ])
 
     # def normal(self, spec, *keys) -> float:
     #     u1 = self.unit(*keys, 0)
@@ -37,15 +49,15 @@ class KeyedRNG:
     #     return clamp(x, spec.min_value, spec.max_value)
 
 
-def stable_hash(*parts: Any, digest_size: int = 16) -> int:
+def stable_hash(*parts: Any, digest_size: int = 16,byteorder = 'little') -> int:
     h = hashlib.blake2b(digest_size=digest_size)
 
     for part in parts:
         data = repr(part).encode("utf-8")
-        h.update(len(data).to_bytes(4, "little"))
+        h.update(len(data).to_bytes(4, byteorder))
         h.update(data)
 
-    return int.from_bytes(h.digest(), "little")
+    return int.from_bytes(h.digest(), byteorder)
 
 @dataclass(frozen=True)
 class ChanceBoolVariation:

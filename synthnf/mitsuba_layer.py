@@ -5,6 +5,7 @@ from typing import Any
 import synthnf.assets as assets
 import synthnf.scene_spec as ss
 import synthnf.scene_variation as sv
+import synthnf.oxides as ox
 import drjit as dr
 import mitsuba as mi
 import numpy as np
@@ -44,6 +45,12 @@ class MitsubaElement:
         return {
             self.element_key:inner_out_dict
         }
+
+@dataclass
+class MitsubaRodElement(MitsubaElement):
+    oxide_texture:Image | None = None
+    
+
 
 @dataclass
 class MitsubaElementCollection:
@@ -166,7 +173,7 @@ class MitsubaScene:
         )
     
     @staticmethod
-    def from_inspection_scene(inspection_scene:ss.InspectionScene):
+    def from_inspection_scene(inspection_scene:ss.InspectionScene,krng,*keys):
         
         nfa_spec = inspection_scene.nfa_spec
 
@@ -177,17 +184,29 @@ class MitsubaScene:
         rods = []
         grids = []
         if nfa_spec is not None:
+            pure_black = {    
+                "type": "diffuse",
+                "reflectance": {
+                    "type": "rgb",
+                    "value": [0.0, 0.0, 0.0],
+                },
+            }
             if nfa_spec.rods_material_spec is not None:
                 material = nfa_spec.rods_material_spec
             if nfa_spec.grids_material_spec is not None:
                 grids_material = nfa_spec.grids_material_spec
             rods =[
-                MitsubaElement(f"rod_{i:05}",{
+                MitsubaRodElement(f"rod_{i:05}",{
                     'type': 'cylinder',
                     'radius': rod.radius,
                     'p0':np.array(rod.xyz) - [0,0,rod.height/2],
                     'p1':np.array(rod.xyz) + [0,0,rod.height/2],
-                    'material':{'type':'ref','id':material_id},
+                    'material':{
+                        "type": "blendbsdf",
+                        "weight": 0,
+                        "rod_material":{'type':'ref','id':material_id},
+                        "pure_black": pure_black
+                    },
                 }) for i,rod in enumerate(nfa_spec.rods_specs)
             ]
             
@@ -200,10 +219,92 @@ class MitsubaScene:
             ]
             
 
+        rods_have_oxides =  isinstance(material,ss.MaterialOxidizedConductor) and material.oxide_spots
         material = MitsubaElement(
             material_id, 
             convert_to_mitsuba_material(material,material_id=material_id)
         )
+        if rods_have_oxides:
+            
+            print('shennigens with rods here')
+            new_rods = []
+            rod_count = nfa_spec.rods_shape_spec.row_number
+            
+            oxide_bank = {}
+            texture_zoom = 10
+            poisson_disk_radius = .04
+            
+            poisson_seed = krng.uint32('poisson_seed',*keys)//2
+            noise_seed = krng.uint32('noise_seed',*keys)//2
+
+            spot_texture_generator=ox.OxideSpotTextureGenerator(
+                cylinder_noise= ox.CylinderNoise(
+                    ox.perlin_noise_gen(noise_seed)
+                ),
+            )
+
+            for i,rod_dict in enumerate(rods[:rod_count]):
+                rcx,rcy = rod_dict.element_dict['p0'][:2]
+                rod_radius = rod_dict.element_dict['radius']
+                rod_height = np.abs(rod_dict.element_dict['p0'][2]-rod_dict.element_dict['p1'][2])
+                
+                texture_result = spot_texture_generator.generate(
+                    rcx,
+                    rcy,
+                    rod_radius,
+                    rod_height,
+                    poisson_disk_radius,
+                    krng,
+                    texture_zoom,
+                    f"rod_{i}",'texture',
+                    *keys
+                )
+
+                oxide_bank[rod_dict.element_key] = texture_result
+
+
+            for r,rod_texture_res in zip(rods[:rod_count],oxide_bank.values()):
+                new_dict = dict(r.element_dict)
+                oxide_mask = rod_texture_res.oxide_mask
+                rod_material_weight = (oxide_mask[:,:,None] + 0 )/4
+                
+                
+                rod_material_dict = {
+                    "type": "blendbsdf",
+                    "weight": {
+                        "type": "bitmap",
+                        "data": mi.TensorXf(rod_material_weight),
+                        "raw": True,
+                        "filter_type": "nearest",
+                        "wrap_mode": "repeat",
+                    },
+                    "bsdf_0": {'type':'ref','id':material_id},
+                    "bsdf_1": porcelain_plastic(),
+                }
+                
+                new_dict['material']['rod_material'] = rod_material_dict
+                
+                new_dict['emmiter'] = {
+                    "type": "area",
+                    "radiance": {
+                        "type": "bitmap",
+                        "data": mi.TensorXf(np.zeros_like(rod_material_weight)),
+                        "raw": True,
+                        "filter_type": "nearest",
+                        "wrap_mode": "repeat",
+                    }
+                }
+                
+                new_rod = MitsubaRodElement(
+                    r.element_key,
+                    new_dict,
+                    oxide_texture = rod_material_weight
+                )
+                new_rods.append(new_rod)
+            
+            rods = new_rods + rods[rod_count:]
+            
+        
 
         grids_material = MitsubaElement(
             grids_material_id, 
@@ -393,6 +494,18 @@ def zirconium_conductor(alpha_u=None, alpha_v=None):
     k_spectrum = list(zip(wv, eta))
     return create_manual_conductor(eta_spectrum, k_spectrum, alpha_u=alpha_u, alpha_v=alpha_v)
 
+def porcelain_plastic():
+    return {
+        "type": "roughplastic",
+        "distribution": "ggx",
+        "int_ior": 1.5,
+        "ext_ior": 1.0,
+        "alpha": 0.125,
+        "diffuse_reflectance": {
+            "type": "rgb",
+            "value": [0.62, 0.60, 0.76],
+        },
+    }
 
 # At this moment, this is recursive
 def convert_to_mitsuba_material(material_definition,material_id=None):
@@ -406,7 +519,6 @@ def convert_to_mitsuba_material(material_definition,material_id=None):
         definition = {
             'type': 'blendbsdf',
             'weight': {"type": "spectrum", "value": blend_val},
-            #'weight': {"type": "bitmap", "raw":True, "bitmap":mi.Bitmap(np.ones((100,100,3))*float(material_definition.oxidation_amount))},
             'rods':  convert_to_mitsuba_material(material_definition.conductor_spec,material_id=None),
             'oxidation': convert_to_mitsuba_material(material_definition.oxidation_spec,material_id=None),
         }
@@ -423,6 +535,8 @@ def convert_to_mitsuba_material(material_definition,material_id=None):
             else:
                 rcs = material_definition.rough_conductor_spec
                 definition = inconel_conductor(rcs.alpha_u,rcs.alpha_v)
+        elif material_definition.conductor_name == 'custom_Porcelain':
+            definition = porcelain_plastic()
         else:
             definition = {
                 'material': material_definition.conductor_name
