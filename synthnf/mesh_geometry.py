@@ -1,4 +1,5 @@
 import synthnf.ply as ply
+import warnings
 import numpy as np
 import mitsuba as mi
 import drjit as dr
@@ -55,7 +56,7 @@ def create_grid_mesh_from_tooth(
     grid_info = p_x, p_y, p_z, v_1, v_2, v_3, n_x, n_y, n_z
 
     distance = -grid_dist_from_center(rod_count, rod_width_mm, rod_gap_width_mm)
-    print('warning doing some shaningens here')
+    warnings.warn('warning doing some shaningens here')
     distance+=73
 
     # UV mapping
