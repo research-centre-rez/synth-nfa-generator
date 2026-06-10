@@ -167,39 +167,43 @@ class MaterialConductorVariation:
             warnings.warn("Base variation cannot vary non-conductor material")
             return rods_material_spec
 
-@dataclass
+@dataclass(frozen=True)
 class TextureOxideSpotsVariation:
-    noise_texture_zoom:float=MultiplicativeScalarUniformVariationSpecs()
-    min_oxide_size_px:int = MultiplicativeScalarUniformVariationSpecs()
-    max_oxide_size_px:int = MultiplicativeScalarUniformVariationSpecs()
-    oxide_spots_coverage:float = MultiplicativeScalarUniformVariationSpecs()
-    poisson_disk_radius:float = MultiplicativeScalarUniformVariationSpecs()
+    noise_texture_zoom:MultiplicativeScalarUniformVariationSpecs=MultiplicativeScalarUniformVariationSpecs()
+    min_oxide_size_px:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
+    max_oxide_size_px:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
+    oxide_spots_coverage:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
+    opacity:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
+    poisson_disk_radius:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
     
-    def sample(self, oxide_spots_specs:ss.TextureOxideSpotsSpec,krng,*keys):
+    def sample(self, oxide_spots_spec:ss.TextureOxideSpotsSpec,krng,*keys):
+        if oxide_spots_spec is None:
+            return None
         return replace(
-            oxide_spots,
-            noise_texture_zoom = self.noise_texture_zoom.sample(oxide_spots_specs.noise_texture_zoom,krng , 'noise_texture_zoom',*keys),
-            min_oxide_size_px = self.min_oxide_size_px.sample(oxide_spots_specs.min_oxide_size_px,krng,'min_oxide_size_px',*keys),
-            max_oxide_size_px = self.max_oxide_size_px.sample(oxide_spots_specs.max_oxide_size_px,krng,'max_oxspx',*keys),
-            oxide_spots_coverage = self.oxide_spots_coverage.sample(oxide_spots_specs.oxide_spots_coverage,krng,'oxsc',*keys),
-            poisson_disk_radius = self.poisson_disk_radius.sample(oxide_spots_specs.poisson_disk_radius,krng,'pdr',*keys),
+            oxide_spots_spec,
+            noise_texture_zoom = self.noise_texture_zoom.sample(oxide_spots_spec.noise_texture_zoom,krng , 'noise_texture_zoom',*keys),
+            min_oxide_size_px = self.min_oxide_size_px.sample(oxide_spots_spec.min_oxide_size_px,krng,'min_oxide_size_px',*keys),
+            max_oxide_size_px = self.max_oxide_size_px.sample(oxide_spots_spec.max_oxide_size_px,krng,'max_oxspx',*keys),
+            oxide_spots_coverage = self.oxide_spots_coverage.sample(oxide_spots_spec.oxide_spots_coverage,krng,'oxsc',*keys),
+            opacity = self.opacity.sample(oxide_spots_spec.opacity,krng,'opacity',*keys),
+            poisson_disk_radius = self.poisson_disk_radius.sample(oxide_spots_spec.poisson_disk_radius,krng,'pdr',*keys),
         )
         
 @dataclass(frozen=True)
 class MaterialOxidizedConductorVariation:
     conductor_variation:MaterialConductorVariation = MaterialConductorVariation()
     oxidation_amount:MultiplicativeScalarUniformVariationSpecs=MultiplicativeScalarUniformVariationSpecs(1,1)
-    oxide_spots_specs:tuple[TextureOxideSpotsVariation,...] = ()
+    oxide_spots_spec:TextureOxideSpotsVariation=TextureOxideSpotsVariation()
 
     def sample(self,oxidized_conductor:ss.MaterialOxidizedConductorSpec, krng,*keys):
         ox = self.oxidation_amount.sample(oxidized_conductor.oxidation_amount,krng,'oxide_amount',*keys)
         ox = np.clip(ox,0,1)
-        
+
         return replace(
             oxidized_conductor,
             conductor_spec = self.conductor_variation.sample(oxidized_conductor.conductor_spec, krng,'cond_spec',*keys),
             oxidation_amount = ox,
-            #oxidation_spec=
+            oxide_spots_spec = self.oxide_spots_spec.sample(oxidized_conductor.oxide_spots_spec,krng,f"spot_oxidation",*keys)
         )
 
 class DummyVar:

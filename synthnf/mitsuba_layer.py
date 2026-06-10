@@ -1,4 +1,5 @@
 import pandas as pd
+import warnings
 import cv2
 import scipy.ndimage as ndi
 from typing import Any
@@ -167,7 +168,7 @@ class MitsubaScene:
             pink = [1,0,1]
             traverse_oxide_label_scene(scene,self,label_color = pink)
             path_integrator = mi.load_dict({"type":"path","max_depth":1})
-            lrend = mi.render(scene,spp = 1,integrator=path_integrator,sensor = label_sensor)
+            lrend = mi.render(scene,spp = 8,integrator=path_integrator,sensor = label_sensor)
             oxide_mask = np.all(np.clip(lrend[:,:,:3],0,1) == np.array(pink)[None,None],axis=2)
 
 
@@ -252,13 +253,8 @@ class MitsubaScene:
             material_id, 
             convert_to_mitsuba_material(rods_material,material_id=material_id)
         )
-        if isinstance(rods_material,ss.MaterialOxidizedConductorSpec):
-            oxide_spots_specs = rods_material.oxide_spots_specs
-            
-            print('shennigens with rods here')
-            new_rods = []
-            
-            oxide_bank = {}
+        if isinstance(rods_material,ss.MaterialOxidizedConductorSpec) and rods_material.oxide_spots_spec is not None:
+            oxide_spots_spec = rods_material.oxide_spots_spec
             
             poisson_seed = krng.uint32('poisson_seed',*keys)//2
             noise_seed = krng.uint32('noise_seed',*keys)//2
@@ -268,8 +264,10 @@ class MitsubaScene:
                     ox.perlin_noise_gen(noise_seed)
                 ),
             )
-            
-            for i,(rod_dict,oxide_spots_spec) in enumerate(zip(rods,oxide_spots_specs)):
+            rod_count = nfa_spec.rods_shape_spec.row_number
+
+            oxide_bank = {}
+            for i,rod_dict in enumerate(rods[:rod_count]):
                 rcx,rcy = rod_dict.element_dict['p0'][:2]
                 rod_radius = rod_dict.element_dict['radius']
                 rod_height = np.abs(rod_dict.element_dict['p0'][2]-rod_dict.element_dict['p1'][2])
@@ -291,11 +289,11 @@ class MitsubaScene:
                 )
                 oxide_bank[rod_dict.element_key] = texture_result
 
-
+            new_rods = []
             for r,rod_texture_res in zip(rods,oxide_bank.values()):
                 new_dict = dict(r.element_dict)
                 oxide_mask = rod_texture_res.oxide_mask
-                rod_material_weight = (oxide_mask[:,:,None] + 0 )/4
+                rod_material_weight = (oxide_mask[:,:,None])*oxide_spots_spec.opacity
                 
                 
                 rod_material_dict = {
@@ -334,6 +332,8 @@ class MitsubaScene:
             rods = new_rods + rods[len(new_rods):]            
         
 
+        if grids_material.oxide_spots_spec is not None:
+            warnings.warn("Applying oxide spots to grids material is not supported yet")
         grids_material = MitsubaElement(
             grids_material_id, 
             convert_to_mitsuba_material(grids_material,material_id = grids_material_id)
@@ -527,7 +527,7 @@ def traverse_oxide_label_scene(
             oxide_texture = r.oxide_texture
             texture_tensor = mi.TensorXf(np.dstack([oxide_texture]*3) * label_color_3ch*label_emitter_intensity )
             tt[r.element_key + '.emitter.radiance.data'] = texture_tensor
-        elif rod_bsdf_opacity in tt:
+        if rod_bsdf_opacity in tt:
             tt[rod_bsdf_opacity] = 0
 
     # disable any other emitters
