@@ -61,9 +61,21 @@ class OxideSpotTextureGenerator():
     ):
         self.cylinder_noise = cylinder_noise
         self.texture_resolution_x= texture_resolution_x
-        pass
     
-    def generate(self,rod_center_x,rod_center_y, rod_radius, rod_height ,poisson_disk_radius, krng,noise_texture_zoom=1,*keys):
+    def generate(
+        self,
+        rod_center_x,
+        rod_center_y, 
+        rod_radius, 
+        rod_height , 
+        krng,
+        *keys,
+        noise_texture_zoom=1,
+        min_oxide_size_px=10, 
+        max_oxide_size_px=25,
+        oxide_spots_coverage_threshold = .5,
+        poisson_disk_radius = .06,
+    ):
         poisson_seed = krng.uint32('poisson_seed',*keys)
         spot_centers = poisson_disk(
             poisson_seed, 
@@ -81,11 +93,20 @@ class OxideSpotTextureGenerator():
         )
         
         keep_probability = normalize(surface_probabilities)
+        
+        # this is controllable, yet pretty bad looking way to filter the spots
+        # n = len(spot_centers)
+        # desc_sort_idcs = np.argsort(keep_probability)[::-1]
+        # top_k_idcs = desc_sort_idcs[:int(n*oxide_spots_coverage)]
+        # points_filter = np.zeros(n, dtype=bool)
+        # points_filter[top_k_idcs] = True
     
-        points_filter = keep_probability>krng.uniform_list(len(keep_probability))
-        spts = spot_centers[points_filter]
-
-        radii = ((surface_probabilities[points_filter] +1)/2 )*15 +10
+        random_vals = krng.uniform_list(len(keep_probability)) - oxide_spots_coverage_threshold
+        points_filter = keep_probability>random_vals
+        spts = spot_centers[points_filter]        
+        
+        ox_size_diff = max_oxide_size_px - min_oxide_size_px
+        radii = surface_probabilities[points_filter]*ox_size_diff +min_oxide_size_px
 
         xy_ratio =np.ceil(rod_height/(2*np.pi*rod_radius ))
         res_y = self.texture_resolution_x*int(xy_ratio) 

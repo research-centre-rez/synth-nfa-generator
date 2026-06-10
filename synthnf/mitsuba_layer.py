@@ -23,9 +23,11 @@ class RenderResult:
     raw_gray:Image
     denoised_rgba:Image
     denoised_gray:Image
+    render_scene:mi.SceneParameters
     label_rgba:Image
     label_instances:InstanceMask
-    label_scene:mi.Scene # todo make abstract later
+    label_scene:mi.SceneParameters # todo make abstract later
+    label_oxide:Image
 
 @dataclass
 class MitsubaElement:
@@ -125,26 +127,49 @@ class MitsubaScene:
         return scene_dict
 
 
-    def render(self, spp = 256,denoise=False,include_labels=False)->RenderResult:
+    def render(self, spp = 256,denoise=False,rodgrid_labels=False,oxide_labels = False)->RenderResult:
         scene_dict = self.to_scene_dict()
         scene = mi.load_dict(scene_dict)
-        rendered_rgba = mi.render(scene,spp=spp)    
+        
+        label_sensor_dict = self.main_camera.to_dict()
+        cam_key = list(label_sensor_dict.keys())[0]
+        label_sensor_dict[cam_key]['film']['rfilter']: {'type': 'box'}
+        # HACK (IN A SCENE WHERE CAMERA IS SUBMERGED) removing the reference to the medium from camera will
+        # result in medium not being included in rendering rods. 
+        if self.medium is not None and 'medium_ref' in label_sensor_dict[cam_key]:
+            del label_sensor_dict[cam_key]['medium_ref']
+        label_sensor = mi.load_dict(label_sensor_dict).sensors()[0]
+        
+        beauty_sensor_dict = self.main_camera.to_dict()
+        cam_key = list(beauty_sensor_dict.keys())[0]
+        beauty_sensor_dict[cam_key]['film']['rfilter']:{'type': 'tent'}
+        beauty_sensor = mi.load_dict(beauty_sensor_dict).sensors()[0]
+        
+        rendered_rgba = mi.render(scene,spp=spp,sensor = beauty_sensor)    
+        render_scene = mi.traverse(scene).copy()
         raw_rgba = dr.clip(rendered_rgba,0,1)
         raw_gray = dr.mean(raw_rgba[:,:,:3],axis=2)
 
         label_rgba = None
         label_instances = None
-        label_scene = None
-        if include_labels:
-            scene_label_dict = to_label_scene(
-                scene_dict,
-                sensor_id=self.main_camera.element_key,
-                integrator_id='integrator',
-            )
-            label_scene = mi.load_dict(scene_label_dict)
-            rendered_label = mi.render(label_scene,spp=1)
+        
+        if rodgrid_labels:
+            aovintegrator = mi.load_dict({
+                'type': 'aov',
+                'aovs': 'si:shape_index',
+                'beauty': {'type': 'path'}
+            })
+            rendered_label = mi.render(scene,spp=1,sensor = label_sensor,integrator = aovintegrator)
             label_rgba=rendered_label[:,:,:3]
             label_instances = rendered_label[:,:,4]
+            label_scene = mi.traverse(scene).copy()
+        if oxide_labels:
+            pink = [1,0,1]
+            traverse_oxide_label_scene(scene,self,label_color = pink)
+            path_integrator = mi.load_dict({"type":"path","max_depth":1})
+            lrend = mi.render(scene,spp = 1,integrator=path_integrator,sensor = label_sensor)
+            oxide_mask = np.all(np.clip(lrend[:,:,:3],0,1) == np.array(pink)[None,None],axis=2)
+
 
         
         sensor = self.main_camera.element_dict
@@ -167,9 +192,11 @@ class MitsubaScene:
             raw_gray=srgb_bitmap(raw_gray),
             denoised_rgba=srgb_bitmap(denoised_rgba),
             denoised_gray=srgb_bitmap(denoised_gray),
+            render_scene = render_scene,
             label_rgba=srgb_bitmap(label_rgba),
             label_instances = label_instances,
             label_scene = label_scene,
+            label_oxide = oxide_mask
         )
     
     @staticmethod
@@ -179,7 +206,7 @@ class MitsubaScene:
 
         material_id =  "shared_rod_material"
         grids_material_id = "shared_grid_material"
-        material =  ss.MaterialBSDFSpec()
+        rods_material =  ss.MaterialBSDFSpec()
         grids_material = ss.MaterialBSDFSpec()
         rods = []
         grids = []
@@ -192,7 +219,7 @@ class MitsubaScene:
                 },
             }
             if nfa_spec.rods_material_spec is not None:
-                material = nfa_spec.rods_material_spec
+                rods_material = nfa_spec.rods_material_spec
             if nfa_spec.grids_material_spec is not None:
                 grids_material = nfa_spec.grids_material_spec
             rods =[
@@ -202,11 +229,13 @@ class MitsubaScene:
                     'p0':np.array(rod.xyz) - [0,0,rod.height/2],
                     'p1':np.array(rod.xyz) + [0,0,rod.height/2],
                     'material':{
-                        "type": "blendbsdf",
-                        "weight": 0,
+                        "type": "mask",
                         "rod_material":{'type':'ref','id':material_id},
-                        "pure_black": pure_black
-                    },
+                        'opacity': {
+                            "type": "rgb",
+                            "value": 1,
+                        }
+                    }
                 }) for i,rod in enumerate(nfa_spec.rods_specs)
             ]
             
@@ -219,20 +248,17 @@ class MitsubaScene:
             ]
             
 
-        rods_have_oxides =  isinstance(material,ss.MaterialOxidizedConductor) and material.oxide_spots
-        material = MitsubaElement(
+        rods_material_mitsuba = MitsubaElement(
             material_id, 
-            convert_to_mitsuba_material(material,material_id=material_id)
+            convert_to_mitsuba_material(rods_material,material_id=material_id)
         )
-        if rods_have_oxides:
+        if isinstance(rods_material,ss.MaterialOxidizedConductorSpec):
+            oxide_spots_specs = rods_material.oxide_spots_specs
             
             print('shennigens with rods here')
             new_rods = []
-            rod_count = nfa_spec.rods_shape_spec.row_number
             
             oxide_bank = {}
-            texture_zoom = 10
-            poisson_disk_radius = .04
             
             poisson_seed = krng.uint32('poisson_seed',*keys)//2
             noise_seed = krng.uint32('noise_seed',*keys)//2
@@ -242,8 +268,8 @@ class MitsubaScene:
                     ox.perlin_noise_gen(noise_seed)
                 ),
             )
-
-            for i,rod_dict in enumerate(rods[:rod_count]):
+            
+            for i,(rod_dict,oxide_spots_spec) in enumerate(zip(rods,oxide_spots_specs)):
                 rcx,rcy = rod_dict.element_dict['p0'][:2]
                 rod_radius = rod_dict.element_dict['radius']
                 rod_height = np.abs(rod_dict.element_dict['p0'][2]-rod_dict.element_dict['p1'][2])
@@ -253,17 +279,20 @@ class MitsubaScene:
                     rcy,
                     rod_radius,
                     rod_height,
-                    poisson_disk_radius,
                     krng,
-                    texture_zoom,
-                    f"rod_{i}",'texture',
-                    *keys
+                    f'rod_{i}',
+                    'texture',
+                    *keys,
+                    noise_texture_zoom=oxide_spots_spec.noise_texture_zoom,
+                    min_oxide_size_px = oxide_spots_spec.min_oxide_size_px,
+                    max_oxide_size_px = oxide_spots_spec.max_oxide_size_px,
+                    oxide_spots_coverage_threshold = oxide_spots_spec.oxide_spots_coverage,
+                    poisson_disk_radius = oxide_spots_spec.poisson_disk_radius,
                 )
-
                 oxide_bank[rod_dict.element_key] = texture_result
 
 
-            for r,rod_texture_res in zip(rods[:rod_count],oxide_bank.values()):
+            for r,rod_texture_res in zip(rods,oxide_bank.values()):
                 new_dict = dict(r.element_dict)
                 oxide_mask = rod_texture_res.oxide_mask
                 rod_material_weight = (oxide_mask[:,:,None] + 0 )/4
@@ -302,8 +331,7 @@ class MitsubaScene:
                 )
                 new_rods.append(new_rod)
             
-            rods = new_rods + rods[rod_count:]
-            
+            rods = new_rods + rods[len(new_rods):]            
         
 
         grids_material = MitsubaElement(
@@ -408,7 +436,7 @@ class MitsubaScene:
 
         return MitsubaScene(
             rods = rods,
-            rods_shared_material = material,
+            rods_shared_material = rods_material_mitsuba,
             grids = grids,
             grids_shared_material = grids_material,
             main_camera = main_cam ,
@@ -426,29 +454,6 @@ class PostProcessRenderingVariation:
         alpha = self.noise_denoise_blend.sample(1,krng,*keys)
 
         return alpha*render_result.denoised_rgba + (1-alpha)*render_result.raw_rgba
-
-
-def to_label_scene(
-    scene_dict,
-    sensor_id = "sensor",
-    integrator_id="integrator"
-):    
-    return {
-        **scene_dict,
-        # this overwrites previous sensor
-        sensor_id: {
-            **scene_dict[sensor_id],
-            'film': {
-                **scene_dict[sensor_id]['film'],
-                'rfilter': {'type': 'box'}
-            }
-        },
-        integrator_id: {
-            'type': 'aov',
-            'aovs': 'si:shape_index',
-            'beauty': {'type': 'path'}
-        }
-    }
 
 
 def create_manual_conductor(eta_spectrum, k_spectrum, alpha_u=None, alpha_v=None):
@@ -507,13 +512,37 @@ def porcelain_plastic():
         },
     }
 
+def traverse_oxide_label_scene(
+    scene:mi.SceneParameters,
+    mitsuba_scene:MitsubaScene, # used to disable emmiters and non-visible-rods,
+    label_color,
+    label_emitter_intensity = 10
+):
+    tt = mi.traverse(scene)
+    label_color_3ch = np.array(label_color)[None,None]
+    for r in mitsuba_scene.rods:    
+        rod_bsdf_opacity = r.element_key+'.bsdf.opacity.value'
+        if r.oxide_texture is not None:
+            # turn oxides to emmiter so that it can be masked out
+            oxide_texture = r.oxide_texture
+            texture_tensor = mi.TensorXf(np.dstack([oxide_texture]*3) * label_color_3ch*label_emitter_intensity )
+            tt[r.element_key + '.emitter.radiance.data'] = texture_tensor
+        elif rod_bsdf_opacity in tt:
+            tt[rod_bsdf_opacity] = 0
+
+    # disable any other emitters
+    tt['env_map.scale'] = 0
+    for e in mitsuba_scene.emitters:
+        tt[f"{e.element_key}.emitter.radiance.value"] = mi.Color3f(0,0,0)
+    tt.update();
+
 # At this moment, this is recursive
 def convert_to_mitsuba_material(material_definition,material_id=None):
 
     
     definition = {}
 
-    if isinstance(material_definition,ss.MaterialOxidizedConductor):
+    if isinstance(material_definition,ss.MaterialOxidizedConductorSpec):
         blend_val = float(np.clip(material_definition.oxidation_amount,0,1))
         
         definition = {

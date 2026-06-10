@@ -167,16 +167,31 @@ class MaterialConductorVariation:
             warnings.warn("Base variation cannot vary non-conductor material")
             return rods_material_spec
 
-
-
+@dataclass
+class TextureOxideSpotsVariation:
+    noise_texture_zoom:float=MultiplicativeScalarUniformVariationSpecs()
+    min_oxide_size_px:int = MultiplicativeScalarUniformVariationSpecs()
+    max_oxide_size_px:int = MultiplicativeScalarUniformVariationSpecs()
+    oxide_spots_coverage:float = MultiplicativeScalarUniformVariationSpecs()
+    poisson_disk_radius:float = MultiplicativeScalarUniformVariationSpecs()
+    
+    def sample(self, oxide_spots_specs:ss.TextureOxideSpotsSpec,krng,*keys):
+        return replace(
+            oxide_spots,
+            noise_texture_zoom = self.noise_texture_zoom.sample(oxide_spots_specs.noise_texture_zoom,krng , 'noise_texture_zoom',*keys),
+            min_oxide_size_px = self.min_oxide_size_px.sample(oxide_spots_specs.min_oxide_size_px,krng,'min_oxide_size_px',*keys),
+            max_oxide_size_px = self.max_oxide_size_px.sample(oxide_spots_specs.max_oxide_size_px,krng,'max_oxspx',*keys),
+            oxide_spots_coverage = self.oxide_spots_coverage.sample(oxide_spots_specs.oxide_spots_coverage,krng,'oxsc',*keys),
+            poisson_disk_radius = self.poisson_disk_radius.sample(oxide_spots_specs.poisson_disk_radius,krng,'pdr',*keys),
+        )
+        
 @dataclass(frozen=True)
 class MaterialOxidizedConductorVariation:
     conductor_variation:MaterialConductorVariation = MaterialConductorVariation()
     oxidation_amount:MultiplicativeScalarUniformVariationSpecs=MultiplicativeScalarUniformVariationSpecs(1,1)
-    #TODO oxidation_variation MaterialOxidizedConductor().oxidation_spec 
-    #TODO heterogenous
+    oxide_spots_specs:tuple[TextureOxideSpotsVariation,...] = ()
 
-    def sample(self,oxidized_conductor:ss.MaterialOxidizedConductor, krng,*keys):
+    def sample(self,oxidized_conductor:ss.MaterialOxidizedConductorSpec, krng,*keys):
         ox = self.oxidation_amount.sample(oxidized_conductor.oxidation_amount,krng,'oxide_amount',*keys)
         ox = np.clip(ox,0,1)
         

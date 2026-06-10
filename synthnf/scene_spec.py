@@ -21,6 +21,15 @@ class MaterialBSDFSpec:
 @dataclass(frozen=True)
 class MaterialOxideLayer:
     gray_scale:float = .3
+    
+@dataclass
+class TextureOxideSpotsSpec:
+    noise_texture_zoom:float=10
+    min_oxide_size_px:int = 16
+    max_oxide_size_px:int = 22
+    oxide_spots_coverage:float = 0
+    poisson_disk_radius:float = .04
+
 
 @dataclass(frozen=True)
 class MaterialNamedAnyConductorSpec:
@@ -28,11 +37,11 @@ class MaterialNamedAnyConductorSpec:
     rough_conductor_spec:MaterialRoughConductorSpec|None = None
     
 @dataclass(frozen=True)
-class MaterialOxidizedConductor:
+class MaterialOxidizedConductorSpec:
     conductor_spec:MaterialNamedAnyConductorSpec = MaterialNamedAnyConductorSpec()
     oxidation_spec:MaterialOxideLayer = MaterialOxideLayer()
     oxidation_amount:float = .1
-    oxide_spots:bool = False # TODO add parametrization
+    oxide_spots_specs:tuple[TextureOxideSpotsSpec,...] = ()
 
 
 @dataclass(frozen=True)
