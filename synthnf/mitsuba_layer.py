@@ -287,13 +287,19 @@ class MitsubaScene:
                     oxide_spots_coverage_threshold = oxide_spots_spec.oxide_spots_coverage,
                     poisson_disk_radius = oxide_spots_spec.poisson_disk_radius,
                 )
+
                 oxide_bank[rod_dict.element_key] = texture_result
 
             new_rods = []
             for r,rod_texture_res in zip(rods,oxide_bank.values()):
                 new_dict = dict(r.element_dict)
                 oxide_mask = rod_texture_res.oxide_mask
+                # too small sigma results in artifacts
+                if oxide_spots_spec.blur_sigma > 1:
+                    oxide_mask = ndi.gaussian_filter(oxide_mask, sigma=oxide_spots_spec.blur_sigma)
+                
                 rod_material_weight = (oxide_mask[:,:,None])*oxide_spots_spec.opacity
+
                 
                 
                 rod_material_dict = {

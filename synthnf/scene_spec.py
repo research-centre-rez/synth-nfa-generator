@@ -30,6 +30,7 @@ class TextureOxideSpotsSpec:
     oxide_spots_coverage:float = 0
     opacity:float = .25
     poisson_disk_radius:float = .04
+    blur_sigma:float = 0
 
 
 @dataclass(frozen=True)

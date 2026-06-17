@@ -175,6 +175,7 @@ class TextureOxideSpotsVariation:
     oxide_spots_coverage:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
     opacity:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
     poisson_disk_radius:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
+    blur_sigma:MultiplicativeScalarUniformVariationSpecs = MultiplicativeScalarUniformVariationSpecs()
     
     def sample(self, oxide_spots_spec:ss.TextureOxideSpotsSpec,krng,*keys):
         if oxide_spots_spec is None:
@@ -187,6 +188,7 @@ class TextureOxideSpotsVariation:
             oxide_spots_coverage = self.oxide_spots_coverage.sample(oxide_spots_spec.oxide_spots_coverage,krng,'oxsc',*keys),
             opacity = self.opacity.sample(oxide_spots_spec.opacity,krng,'opacity',*keys),
             poisson_disk_radius = self.poisson_disk_radius.sample(oxide_spots_spec.poisson_disk_radius,krng,'pdr',*keys),
+            blur_sigma = self.blur_sigma.sample(oxide_spots_spec.blur_sigma,krng,'blur_s',*keys),
         )
         
 @dataclass(frozen=True)
