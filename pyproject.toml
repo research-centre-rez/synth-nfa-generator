@@ -52,6 +52,9 @@ dependencies = [
   "pandas",
   "scipy",
   "scikit-image",
+  "opencv-python-headless",
+  "pyfastnoiselite",
+  
 ]
 
 # List additional groups of dependencies here (e.g. development
