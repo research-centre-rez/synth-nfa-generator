@@ -4,7 +4,8 @@ assets_path = (
     Path(
         __file__,
     ).parent
-    / "../../assets"
+    / "../assets"
+    
 )
 
 mitsuba_materials_w_description = {
@@ -69,5 +70,6 @@ env_map_names = (
 
 
 def get_asset_path(filepath):
-    p = Path('..')/'assets'/filepath
+    # remove extra "../" from path
+    p = (assets_path / filepath).resolve()
     return str(p.absolute())
