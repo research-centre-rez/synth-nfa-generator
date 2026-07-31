@@ -52,8 +52,9 @@ dependencies = [
   "pandas",
   "scipy",
   "scikit-image",
-  "bezier",
-  "perlin-numpy@git+https://github.com/jaroslavknotek/perlin-numpy.git"
+  "opencv-python-headless",
+  "pyfastnoiselite",
+  
 ]
 
 # List additional groups of dependencies here (e.g. development
