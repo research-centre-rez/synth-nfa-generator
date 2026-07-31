@@ -6,11 +6,11 @@ jupyter:
       extension: .md
       format_name: markdown
       format_version: '1.3'
-      jupytext_version: 1.19.4
+      jupytext_version: 1.19.5
   kernelspec:
-    display_name: synth
+    display_name: .venv (3.12.3)
     language: python
-    name: synth
+    name: python3
 ---
 
 ```python
@@ -27,10 +27,23 @@ from dataclasses import dataclass
 import numpy.typing as npt
 import numpy as np
 import matplotlib.pyplot as plt
+import drjit as dr
+import synthnf.mitsuba_layer as ml
+import cv2
 
 import mitsuba as mi
-mi.set_variant('cuda_ad_rgb', 'llvm_ad_rgb')
+mi.set_variant('cuda_ad_rgb') # , 'llvm_ad_rgb'
 mi.set_log_level(mi.LogLevel.Error)
+```
+
+```python
+import os
+import tempfile
+
+# Force Python's tempfile module to use a directory in your home workspace
+os.environ["TMPDIR"] = os.path.expanduser("~/tmp")
+os.makedirs(os.path.expanduser("~/tmp"), exist_ok=True)
+tempfile.tempdir = os.path.expanduser("~/tmp")
 ```
 
 # Define Scene 
@@ -70,7 +83,7 @@ inspection_scene = ss.InspectionScene(
         ]
         
     ),
-    cam_ring_spec= ss.AhlbergCameraRingSpec.single_cam_four_x_lights(field_of_view=40, light_intensity=200,light_height_offset=0, resolution_x=800, resolution_y=450),
+    cam_ring_spec= ss.AhlbergCameraRingSpec.single_cam_four_x_lights(field_of_view=40, light_intensity=200,light_height_offset=0), # , resolution_x=800, resolution_y=450
     env_map_spec=ss.EnvironmentMapSpec(
         intensity_scale=1.05
     ),
@@ -199,11 +212,10 @@ inspection_variation = sv.InspectionVariationParams(
 This is the example how to render a NFA scene with the least amount of interaction
 
 ```python
-import synthnf.mitsuba_layer as ml
 
-# # uncomment only if you want to see a variation of the original scene
-# # inspection_scene_varied = inspection_variation.sample(inspection_scene,krng,'inspection_var',*keys)
-# # inspection_scene = inspection_scene_varied
+# uncomment only if you want to see a variation of the original scene
+# inspection_scene_varied = inspection_variation.sample(inspection_scene,krng,'inspection_var',*keys)
+# inspection_scene = inspection_scene_varied
 
 # mitsuba_scene = ml.MitsubaScene.from_inspection_scene(inspection_scene,krng)
 # render_res = mitsuba_scene.render(denoise=True,rodgrid_labels=True,oxide_labels=True,spp=64)
@@ -225,37 +237,72 @@ import synthnf.mitsuba_layer as ml
 # plt.show()
 ```
 
+# Denoiser
+
+```python
+denoiser = mi.OptixDenoiser(
+    input_size=[1600, 900], 
+    albedo=False, 
+    normals=False, 
+    temporal=False
+)
+```
+
 # Hooking Into Mitsuba Dictionary
 
 This is a piece of code for adding custom content into the scene:
-#### 1. Manual addition of debris
+## 1. Manual addition of debris
+### 1. Bolt
 
 ```python
-## add debris to scene manually
+# helper functions
+def plot_results(raw_scene, albedo_mask):
+    img_albedo = ml.srgb_bitmap(albedo_mask)
+    img_scene = ml.srgb_bitmap(denoiser(raw_scene[:, :, :3]))
+
+    alpha_channel = dr.ones(mi.TensorXf, (albedo_mask.shape[0], albedo_mask.shape[1], 1))
+    raw_mask = dr.concat([albedo_mask, alpha_channel], axis=2)
+    multiplier = dr.scalar.TensorXf([1.0, 0.3, 1.0, 1.0]) 
+    pink_mask = raw_mask * multiplier
+    img_pink = ml.srgb_bitmap(pink_mask[:, :, :3])
+
+    fig, axes = plt.subplot_mosaic(
+        [["top_left", "top_right"],
+        ["bottom",   "bottom"]],
+        figsize=(12, 10),
+        layout='constrained'
+    )
+
+    axes["top_left"].imshow(img_albedo)
+    axes["top_left"].set_title('Debris mask', fontsize=12, fontweight='bold')
+    axes["top_left"].axis('off')
+
+    axes["top_right"].imshow(img_scene)
+    axes["top_right"].set_title('Scene with debris', fontsize=12, fontweight='bold')
+    axes["top_right"].axis('off')
+
+    axes["bottom"].imshow(img_scene)
+    axes["bottom"].imshow(img_pink, alpha=0.5)
+    axes["bottom"].set_title('Masked debris', fontsize=14, fontweight='bold')
+    axes["bottom"].axis('off')
+    plt.show()
+
+def store_image_and_mask(raw_scene, albedo_mask, image_path, mask_path):
+    img_srgb = ml.srgb_bitmap(raw_scene[:, :, :3])
+    img_np = np.clip(np.array(img_srgb), 0.0, 1.0)
+    img_uint8 = (img_np * 255).astype(np.uint8)
+    img_bgr = cv2.cvtColor(img_uint8, cv2.COLOR_RGB2BGR)
+    cv2.imwrite(image_path, img_bgr)
+
+    mask_np = albedo_mask.numpy().astype("uint8") # * 255
+    print(max(mask_np.flatten()), min(mask_np.flatten()))
+    cv2.imwrite(mask_path, mask_np)
+```
+
+```python
+# add debris to scene manually
 mitsuba_scene = ml.MitsubaScene.from_inspection_scene(inspection_scene,krng)
 scene_dict = mitsuba_scene.to_scene_dict()
-
-# curved metal - not labellable yet
-scene_dict['curved_wire'] = {
-    'type': 'bsplinecurve',
-    'to_world': mi.ScalarAffineTransform4f().translate([0, -120, 5]).rotate([1,0,0], angle=90).scale([20,20,20]),
-    'filename': 'assets/curves.txt',
-    'bsdf': {
-        'type': 'conductor',
-        'material': 'Cr'
-    }
-}
-
-# metal cylinder wire
-scene_dict['wire'] = {
-    'type': 'cylinder',
-    'radius': 0.05,
-    'to_world': mi.ScalarAffineTransform4f().translate([17, -104.5, 23]).rotate([0,1,0], angle=90).scale([15,15,15]),
-    'material': {
-        'type': 'conductor',
-        'material': 'Cr'
-    }
-}
 
 # add custom bolt
 scene_dict['bolt'] = {
@@ -270,108 +317,173 @@ scene_dict['bolt'] = {
 
 scene = mi.load_dict(scene_dict)
 raw_scene = mi.render(scene,spp=32)
-
-figure = plt.figure(figsize=(10, 7), layout='constrained')
-plt.imshow(ml.srgb_bitmap(raw_scene[:,:,:3]))
-plt.axis('off')
-figure.suptitle('Scene with debris', fontsize=16, fontweight='bold')
-figure.show()
 ```
 
 ```python
-mitsuba_scene = ml.MitsubaScene.from_inspection_scene(inspection_scene,krng)
+mitsuba_scene = ml.MitsubaScene.from_inspection_scene(inspection_scene, krng)
 scene_dict_labels = mitsuba_scene.to_scene_dict()
 
-# bspline curve mask - not working yet --possibly a mitsuba issue
-# scene_dict_labels['curved_wire'] = {
-#     'type': 'bsplinecurve',
-#     'to_world': mi.ScalarAffineTransform4f().translate([0, -120, 5]).rotate([1,0,0], angle=90).scale([20,20,20]),
-#     'filename': 'assets/curves.txt',
-#     'emitter': {
-#         'type': 'area',
-#         'radiance': {
-#             'type': 'rgb',
-#             'value': 1.0,
-#         }
-#     }
-# }
+# add debris objects with unique albedo materials for labeling
+scene_dict_labels['bolt'] = {
+    'type': 'ply',
+    'filename': 'assets/bolt.ply',
+    'to_world': mi.ScalarAffineTransform4f().translate([-32, -104.5, 23]).rotate([0, 1, 0], angle=80).scale([0.8, 0.8, 0.8]),
+    'bsdf': {
+        'type': 'diffuse',
+        'reflectance': {'type': 'rgb', 'value': [1.0, 1.0, 1.0]}
+    }
+}
+
+# filter out rods and grid
+scene_dict_labels = {
+    k: v for k, v in scene_dict_labels.items() 
+    if not (isinstance(k, str) and (k.startswith('rod') or k.startswith('grid')))
+}
+
+# attach aov integrator requesting the `albedo` pass
+scene_dict_labels['integrator'] = {
+    'type': 'aov',
+    'aovs': 'al:albedo',
+    'beauty': {
+        'type': 'path'
+    }
+}
+
+scene_labels = mi.load_dict(scene_dict_labels)
+image = mi.render(scene_labels, spp=1)
+
+# extract the Albedo channels (channels 4..6 after RGBA beauty pass)
+albedo_mask = image[:, :, 4:7]
+
+# plot and store results
+plot_results(raw_scene, albedo_mask)
+store_image_and_mask(raw_scene, albedo_mask, "data/raw/images/sample_0.png", "data/raw/masks/sample_0.png")
+
+```
+
+### 2. Curved wire
+
+```python
+mitsuba_scene = ml.MitsubaScene.from_inspection_scene(inspection_scene,krng)
+scene_dict = mitsuba_scene.to_scene_dict()
+
+# curved metal - not labellable yet
+scene_dict['curved_wire'] = {
+    'type': 'bsplinecurve',
+    'to_world': mi.ScalarAffineTransform4f().translate([0, -120, 5]).rotate([1,0,0], angle=90).scale([20,20,20]),
+    'filename': 'assets/curves.txt',
+    'bsdf': {
+        'type': 'conductor',
+        'material': 'Cr'
+    }
+}
+
+scene = mi.load_dict(scene_dict)
+raw_scene = mi.render(scene,spp=32)
+
+```
+
+```python
+mitsuba_scene = ml.MitsubaScene.from_inspection_scene(inspection_scene, krng)
+scene_dict_labels = mitsuba_scene.to_scene_dict()
+
+# add debris objects with unique albedo materials for labeling
+scene_dict_labels['curved_wire'] = {
+    'type': 'bsplinecurve',
+    'to_world': mi.ScalarAffineTransform4f().translate([0, -120, 5]).rotate([1,0,0], angle=90).scale([20,20,20]),
+    'filename': 'assets/curves.txt',
+    'bsdf': {
+        'type': 'diffuse',
+        'reflectance': {'type': 'rgb', 'value': [1.0, 1.0, 1.0]} 
+    }
+}
+
+# filter out rods and grid
+scene_dict_labels = {
+    k: v for k, v in scene_dict_labels.items() 
+    if not (isinstance(k, str) and (k.startswith('rod') or k.startswith('grid')))
+}
+
+# attach aov integrator requesting the `albedo` pass
+scene_dict_labels['integrator'] = {
+    'type': 'aov',
+    'aovs': 'al:albedo',
+    'beauty': {
+        'type': 'path'
+    }
+}
+
+scene_labels = mi.load_dict(scene_dict_labels)
+image = mi.render(scene_labels, spp=1)
+
+# extract the Albedo channels (channels 4..6 after RGBA beauty pass)
+albedo_mask = image[:, :, 4:7]
+
+# plot and store results
+plot_results(raw_scene, albedo_mask)
+store_image_and_mask(raw_scene, albedo_mask, "data/raw/images/sample_1.png", "data/raw/masks/sample_1.png")
+```
+
+### 3. Wire
+
+```python
+# add debris to scene manually
+mitsuba_scene = ml.MitsubaScene.from_inspection_scene(inspection_scene,krng)
+scene_dict = mitsuba_scene.to_scene_dict()
 
 # metal cylinder wire
+scene_dict['wire'] = {
+    'type': 'cylinder',
+    'radius': 0.05,
+    'to_world': mi.ScalarAffineTransform4f().translate([17, -104.5, 23]).rotate([0,1,0], angle=90).scale([15,15,15]),
+    'material': {
+        'type': 'conductor',
+        'material': 'Cr'
+    }
+}
+
+scene = mi.load_dict(scene_dict)
+raw_scene = mi.render(scene,spp=32)
+```
+
+```python
+mitsuba_scene = ml.MitsubaScene.from_inspection_scene(inspection_scene, krng)
+scene_dict_labels = mitsuba_scene.to_scene_dict()
+
 scene_dict_labels['wire'] = {
     'type': 'cylinder',
     'radius': 0.05,
     'to_world': mi.ScalarAffineTransform4f().translate([17, -110, 23]).rotate([0,1,0], angle=90).scale([15,15,15]),
-    'emitter': {
-        'type': 'area',
-        'radiance': {
-            'type': 'rgb',
-            'value': 1.0,
-        }
+    'bsdf': {
+        'type': 'diffuse',
+        'reflectance': {'type': 'rgb', 'value': [1.0, 1.0, 1.0]}  
     }
 }
 
-# 
-scene_dict_labels['bolt'] = {
-    'type': 'ply',
-    'filename': 'assets/bolt.ply',
-    'to_world': mi.ScalarAffineTransform4f().translate([-32, -104.5, 23]).rotate([0, 1, 0], angle=80).scale([0.8, 0.8, 0.8]), # .translate([-20, -100, -20]).scale([4, 4, 4])
-    'emitter': {
-        'type': 'area',
-        'radiance': {
-            'type': 'rgb',
-            'value': 1.0,
-        }
-    }
-}
-
-# block reflections of grid
-scene_dict_labels['grid_00000']['emitter'] = {
-        'type': 'area',
-        'radiance': {
-            'type': 'rgb',
-            'value': 0.0,
-        }
-    }
-scene_dict_labels['grid_00000'].pop("material", None)
-
-# remove rods from scene
+# filter out rods and grid
 scene_dict_labels = {
     k: v for k, v in scene_dict_labels.items() 
-    if not ((isinstance(k, str) and k.startswith('rod')))
-} 
+    if not (isinstance(k, str) and (k.startswith('rod') or k.startswith('grid')))
+}
+
+# attach aov integrator requesting the `albedo` pass
+scene_dict_labels['integrator'] = {
+    'type': 'aov',
+    'aovs': 'al:albedo',
+    'beauty': {
+        'type': 'path'
+    }
+}
 
 scene_labels = mi.load_dict(scene_dict_labels)
-tt = mi.traverse(scene_labels)
+image = mi.render(scene_labels, spp=1)
 
-# turn of all other emitters in scene
-tt['env_map.scale'] = 0
-for e in mitsuba_scene.emitters:
-    tt[f"{e.element_key}.emitter.radiance.value"] = mi.Color3f(0,0,0)
-tt.update()
+# extract the Albedo channels (channels 4..6 after RGBA beauty pass)
+albedo_mask = image[:, :, 4:7]
 
-# no extra rays 
-raw_mask = mi.render(scene_labels,spp=1)
-
-figure = plt.figure(figsize=(10,7), layout='constrained')
-plt.imshow(ml.srgb_bitmap(raw_mask[:,:,:3]))
-plt.axis('off')
-figure.suptitle('Debris mask', fontsize=16, fontweight='bold')
-figure.show()
-
-```
-
-```python
-import drjit as dr
-# show masked image
-multiplier = dr.scalar.TensorXf([1.0, 0.3, 1.0, 1.0]) 
-pink_mask = raw_mask * multiplier
-
-figure = plt.figure(figsize=(10, 7), layout='constrained')
-plt.imshow(ml.srgb_bitmap(raw_scene[:,:,:3]))
-plt.imshow(ml.srgb_bitmap(pink_mask[:,:,:3]), alpha=0.5)
-plt.axis('off')
-figure.suptitle('Masked debris', fontsize=16, fontweight='bold')
-figure.show()
+# plot and store results
+plot_results(raw_scene, albedo_mask)
+store_image_and_mask(raw_scene, albedo_mask, "data/raw/images/sample_2.png", "data/raw/masks/sample_2.png")
 
 ```
 
@@ -379,66 +491,24 @@ figure.show()
 
 
 ```python
-import synthnf.scene_spec as ss
-
-rod_count = 17
-inspection_scene = ss.InspectionScene(
-    nfa_spec= ss.NfaSpec.from_shape(
-        ss.RodsSquareSpec(rod_height=150,column_number=rod_count),
-        rods_material_spec=ss.MaterialOxidizedConductorSpec(
-            conductor_spec = ss.MaterialNamedAnyConductorSpec(
-                conductor_name = "custom_Zircon",
-                rough_conductor_spec=ss.MaterialRoughConductorSpec(alpha_u=.025,alpha_v=.05)
-            ),
-            oxidation_amount = .5,        ),
-        grids_material_spec=ss.MaterialOxidizedConductorSpec(
-            conductor_spec = ss.MaterialNamedAnyConductorSpec(
-                conductor_name = "custom_Inconel",
-                rough_conductor_spec=ss.MaterialRoughConductorSpec(alpha_u=.025,alpha_v=.05)
-            ),
-            oxidation_amount = 0,
-        ),
-        grids = [
-            ss.SpacerGridSpec(
-                z_location=0,
-            )
-        ]
-        
-    ),
-    cam_ring_spec= ss.AhlbergCameraRingSpec.single_cam_four_x_lights(field_of_view=40, light_intensity=200,light_height_offset=0, resolution_x=3200, resolution_y=1800),
-    env_map_spec=ss.EnvironmentMapSpec(
-        intensity_scale=1.05
-    ),
-
-    medium_spec = ss.HeterogenousMediumSpec(
-        albedo=ss.MaterialBSDFSpec(r=0.3,g=0.5,b=0.5) ,
-        hg_phase_g=0.6,
-        scale = .001,
-        volume_spec=ss.MediumRandomGridVolumeSpec(
-            resolution= 64,
-            cube_width=1000,
-            heterogenity_noise_max=.1
-        ),
-    )
-)
-```
-
-```python
 mitsuba_scene = ml.MitsubaScene.from_inspection_scene(inspection_scene, krng)
 scene_dict_rod = mitsuba_scene.to_scene_dict()
 
-# filter scenes
-allowed_keys = {
-    'shared_rod_material', 'shared_grid_material', 'main_camera',
-    'emitter_00000', 'emitter_00001', 'emitter_00002', 'emitter_00003',
-    'medium', 'medium_boundaries', 'env_map', 'type', 'integrator', 'rod_00000'
-}
+# filter scene - uncomment for normal map testing
+# allowed_keys = {
+#     'shared_rod_material', 'shared_grid_material', 'main_camera',
+#     'emitter_00000', 'emitter_00001', 'emitter_00002', 'emitter_00003',
+#     'medium', 'medium_boundaries', 'env_map', 'type', 'integrator', 'rod_00000'
+# }
 
-scene_dict_rod = {k: v for k, v in scene_dict_rod.items() if k in allowed_keys}
+# scene_dict_rod = {k: v for k, v in scene_dict_rod.items() if k in allowed_keys}
 
 # extract the original rod material and remove it
 rod_material = scene_dict_rod['rod_00000']['material']['rod_material']
 scene_dict_rod['rod_00000'].pop('material', None)  
+
+# adjust normal map placement
+uv_transform = mi.ScalarAffineTransform4f().translate([0, -0.4, 0])
 
 # add normal map from file
 normal_map = {
@@ -446,7 +516,8 @@ normal_map = {
     'normalmap': {
         'type': 'bitmap',
         'raw': True,
-        'filename': 'assets/normal_map.jpg'
+        'filename': 'assets/normal_map.jpg',
+        'to_uv': uv_transform
     },
     # original material
     'bsdf': rod_material
@@ -456,7 +527,8 @@ scene_dict_rod['rod_00000']['blend_bsdf'] = {
     'type': 'blendbsdf',
     'weight': {
         'type': 'bitmap',
-        'filename': 'assets/bitmap_mask.jpg'
+        'filename': 'assets/bitmap_mask.jpg',
+        'to_uv': uv_transform
     },
     'bsdf_0': normal_map,
     'bsdf_1': {
@@ -468,40 +540,34 @@ scene_dict_rod['rod_00000']['blend_bsdf'] = {
 # load scenes
 scene_rod = mi.load_dict(scene_dict_rod)
 
-# region of interest definition
-roi_x = 10       # left right corner of ROI (px)
-roi_y = 800       
-roi_width = 700   
-roi_height = 700  
+# # region of interest definition
+# roi_x = 10       # left right corner of ROI (px)
+# roi_y = 800       
+# roi_width = 700   
+# roi_height = 700  
 
-# scene adjustment -crop to roi
-tt_r = mi.traverse(scene_rod)
-tt_r['main_camera.film.crop_size'] = (roi_width, roi_height)
-tt_r['main_camera.film.crop_offset'] = (roi_x, roi_y)
-tt_r['env_map.scale'] = 0
-tt_r.update()
+# # scene adjustment -crop to roi
+# tt_r = mi.traverse(scene_rod)
+# tt_r['main_camera.film.crop_size'] = (roi_width, roi_height)
+# tt_r['main_camera.film.crop_offset'] = (roi_x, roi_y)
+# tt_r['env_map.scale'] = 0
+# tt_r.update()
 
 # render the original and modified scenes
 raw_mod = mi.render(scene_rod,spp=32)
-
-fig = plt.figure(figsize=(8, 8), layout='constrained')
-plt.imshow(ml.srgb_bitmap(raw_mod[:, :, :3]))
-plt.axis('off')
-fig.suptitle('Scratched rod', fontsize=16, fontweight='bold')
-plt.show()
 ```
 
 ```python
 mitsuba_scene = ml.MitsubaScene.from_inspection_scene(inspection_scene, krng)
 scene_dict_rod = mitsuba_scene.to_scene_dict()
 
-# filter scene
-allowed_keys = {
-    'shared_rod_material', 'shared_grid_material', 'main_camera',
-    'emitter_00000', 'emitter_00001', 'emitter_00002', 'emitter_00003',
-    'medium', 'medium_boundaries', 'env_map', 'type', 'integrator', 'rod_00000'
-}
-scene_dict_rod = {k: v for k, v in scene_dict_rod.items() if k in allowed_keys}
+# # filter scene
+# allowed_keys = {
+#     'shared_rod_material', 'shared_grid_material', 'main_camera',
+#     'emitter_00000', 'emitter_00001', 'emitter_00002', 'emitter_00003',
+#     'medium', 'medium_boundaries', 'env_map', 'type', 'integrator', 'rod_00000'
+# }
+# scene_dict_rod = {k: v for k, v in scene_dict_rod.items() if k in allowed_keys}
 
 # remove old material and bsdf from the rod
 scene_dict_rod['rod_00000'].pop('material', None)
@@ -521,22 +587,25 @@ scene_dict_rod['rod_00000']['emitter'] = {
     'type': 'area',
     'radiance': {
         'type': 'bitmap',
-        'filename': 'assets/bitmap_mask.jpg'
+        'filename': 'assets/bitmap_mask.jpg',
+        'to_uv': uv_transform
     }
 }
 
 scene_rod = mi.load_dict(scene_dict_rod)
 
 # crop to roi
-roi_x = 10       
-roi_y = 800       
-roi_width = 700   
-roi_height = 700  
+# roi_x = 10       
+# roi_y = 800       
+# roi_width = 700   
+# roi_height = 700  
 
 tt_r = mi.traverse(scene_rod)
-tt_r['main_camera.film.crop_size'] = (roi_width, roi_height)
-tt_r['main_camera.film.crop_offset'] = (roi_x, roi_y)
+
+# tt_r['main_camera.film.crop_size'] = (roi_width, roi_height)
+# tt_r['main_camera.film.crop_offset'] = (roi_x, roi_y)
 # turn off all other emitters in scene
+
 tt_r['env_map.scale'] = 0
 for e in mitsuba_scene.emitters:
     tt_r[f"{e.element_key}.emitter.radiance.value"] = mi.Color3f(0,0,0)
@@ -545,40 +614,64 @@ tt_r.update()
 # render the label mask
 raw_label = mi.render(scene_rod, spp=1)
 
-fig = plt.figure(figsize=(8, 8), layout='constrained')
-plt.imshow(ml.srgb_bitmap(raw_label[:, :, :3]))
-plt.axis('off')  
-fig.suptitle('Scratch label', fontsize=16, fontweight='bold')
-plt.show()
+plot_results(raw_mod, raw_label[:, :, :3])
+store_image_and_mask(raw_mod, raw_label[:, :,:3], "data/raw/images/sample_3.png", "data/raw/masks/sample_3.png")
+```
+
+## 3. Generate varied images without debris
+
+```python
+output_dir = "./data/raw/"
+
+# define post-processing configuration outside the loop
+post_process_rendering_variation = ml.PostProcessRenderingVariation(
+    noise_denoise_blend=sv.MultiplicativeScalarUniformVariationSpecs(0.6, 0.95)
+)
+
+num_variations = 7
+
+for i in range(num_variations):
+    # 1. Update RNG key per iteration to get unique variations
+    # Assumes key generation/splitting logic based on your library (e.g., JAX/custom PRNG)
+    iteration_key = krng.split() if hasattr(krng, "split") else krng
+
+    # 2. Sample variation of the original scene
+    inspection_scene_varied = inspection_variation.sample(
+        inspection_scene, iteration_key, f"inspection_var_{i}", *keys
+    )
+
+    # 3. Convert to Mitsuba scene & render
+    mitsuba_scene = ml.MitsubaScene.from_inspection_scene(
+        inspection_scene_varied, iteration_key
+    )
+    render_res = mitsuba_scene.render(
+        denoise=True, rodgrid_labels=True, oxide_labels=True, spp=64
+    )
+    
+    post_processed_image = post_process_rendering_variation.sample(
+        render_res, iteration_key, f"post_process_{i}"
+    )
+
+    # 5. Extract dimensions to generate a matching black image
+    height, width = post_processed_image.shape[:2]
+    black_image = np.zeros((height, width), dtype=np.uint8)
+
+    # 6. Save images directly to PNG format
+    render_path = os.path.join(output_dir, f"images/sample_{i+5}.png")
+    black_path = os.path.join(output_dir, f"masks/sample_{i+5}.png")
+
+    plt.imsave(render_path, post_processed_image)
+    plt.imsave(black_path, black_image, cmap="gray")
+
+    print(f"Iteration {i+1}/{num_variations} saved:\n - {render_path}\n - {black_path}")
 ```
 
 ```python
-# show masked image
-multiplier = dr.scalar.TensorXf([1.0, 0.3, 1.0, 1.0]) 
-pink_mask = raw_label * multiplier
-
-figure = plt.figure(figsize=(10, 7), layout='constrained')
-plt.imshow(ml.srgb_bitmap(raw_mod[:,:,:3]))
-plt.imshow(ml.srgb_bitmap(pink_mask[:,:,:3]), alpha=0.5)
-plt.axis('off')
-figure.suptitle('Masked scratch', fontsize=16, fontweight='bold')
-figure.show()
+black_image = np.zeros((900, 1600), dtype=np.uint8)
+plt.imsave('./data/raw/masks/black_image.png', black_image, cmap='gray')
 ```
 
-#### 2. Adding debris based on camera position
-
-```python
-inspection_scene.nfa_spec.rods_specs[0]
-```
-
-```python
-
-for rs in  inspection_scene.nfa_spec.rods_specs:
-    x,y,z = rs.xyz
-    rs.radius
-    plt.plot([x],[y],'o')
-
-```
+## 4. Adding debris based on camera position
 
 ```python
 mitsuba_scene = ml.MitsubaScene.from_inspection_scene(inspection_scene, krng)
@@ -613,7 +706,6 @@ if placement_distance <= near_clip or placement_distance >= far_clip:
     # clamp distance dynamically to guarantee visibility
     placement_distance = max(near_clip * 2.0, min(placement_distance, far_clip * 0.5))
 
-print(placement_distance)
 
 local_target_point = mi.ScalarPoint3f(0.0, 0.0, placement_distance)
 
@@ -637,40 +729,7 @@ scene_dict['my_bolt'] = {
 scene = mi.load_dict(scene_dict)
 raw = mi.render(scene,spp=32)
 
-plt.imshow(ml.srgb_bitmap(raw[:,:,:3]))
-plt.title('raw, noisy image')
-plt.show()
-```
-
-### 3. Adding debris based on grid position
-
-
-# SGRB Conversion
-
-Don't forget to apply intensity conversion. It won't be that dark.
-
-```python
-plt.imshow(ml.srgb_bitmap(raw))
-```
-
-# Denoiser
-
-if you deneoise super low spp image, you will get essentialy garbage, add `spp = 32` to avoid this
-
-```python
-denoiser = mi.OptixDenoiser(
-    input_size=[raw.shape[1], raw.shape[0]], 
-    albedo=False, 
-    normals=False, 
-    temporal=False
-)
-plt.title('Low quality denoised image')
-lowq = mi.render(scene,spp=1)
-plt.imshow(ml.srgb_bitmap((denoiser(lowq)))
-plt.show()
-
-hiqw = mi.render(mi.load_dict(scene_dict),spp=32)
-plt.imshow(ml.srgb_bitmap((denoiser(hiqw)))
-plt.title('higher quality denoised image')
-plt.show()
+# plt.imshow(ml.srgb_bitmap(raw[:,:,:3]))
+# plt.title('raw, noisy image')
+# plt.show()
 ```
