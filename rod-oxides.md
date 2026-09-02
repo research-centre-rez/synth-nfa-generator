@@ -39,7 +39,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import mitsuba as mi
-mi.set_variant('cuda_ad_rgb', 'llvm_ad_rgb')
+
+mi.set_variant("cuda_ad_rgb", "llvm_ad_rgb")
 mi.set_log_level(mi.LogLevel.Error)
 ```
 
@@ -51,33 +52,34 @@ import imageio
 ```
 
 ```python
-ox_poisson = ox.poisson_disk(seed = 123,radius = 0.04)
-plt.scatter(ox_poisson.T[0],ox_poisson.T[1])
+ox_poisson = ox.poisson_disk(seed=123, radius=0.04)
+plt.scatter(ox_poisson.T[0], ox_poisson.T[1])
 ```
 
 ```python
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 def perlin_noise_2d(
     height,
     width,
     seed,
-    scale = 0.02,
-    noise_frequency = .02,
-    noise_octaves = 5,
-    noise_lacunarity = 2,
-    noise_gain = .5
+    scale=0.02,
+    noise_frequency=0.02,
+    noise_octaves=5,
+    noise_lacunarity=2,
+    noise_gain=0.5,
 ):
     noise = ox.perlin_noise_gen(
         seed,
-        scale = scale,
-        noise_frequency = noise_frequency,
-        noise_octaves = noise_octaves,
-        noise_lacunarity = noise_lacunarity,
-        noise_gain = noise_gain,
+        scale=scale,
+        noise_frequency=noise_frequency,
+        noise_octaves=noise_octaves,
+        noise_lacunarity=noise_lacunarity,
+        noise_gain=noise_gain,
     )
-    
+
     y, x = np.mgrid[:height, :width]
 
     coords = np.array(
@@ -87,18 +89,19 @@ def perlin_noise_2d(
         ],
         dtype=np.float32,
     )
-    
+
     return noise.gen_from_coords(coords).reshape(height, width)
-    
+
+
 image = perlin_noise_2d(
     756,
     256,
     123,
 )
 
-_,ax = plt.subplots(1,1)
+_, ax = plt.subplots(1, 1)
 ax.imshow(image, cmap="gray")
-#axs[1].imshow(low_octave_image, cmap="gray")
+# axs[1].imshow(low_octave_image, cmap="gray")
 plt.show()
 ```
 
@@ -117,52 +120,49 @@ rod_center_x = 10
 rod_center_y = 57
 
 
-xy_ratio =np.ceil(rod_height/(2*np.pi*rod_radius ))
-res_y = res_x*int(xy_ratio) 
+xy_ratio = np.ceil(rod_height / (2 * np.pi * rod_radius))
+res_y = res_x * int(xy_ratio)
 
 
-# this should be somehow translated to user 
+# this should be somehow translated to user
 # something like spot_size_inversed maybe
 
-poisson_seed = krng.uint32('poisson_seed',*keys)
-noise_seed = krng.uint32('noise_seed',*keys)
+poisson_seed = krng.uint32("poisson_seed", *keys)
+noise_seed = krng.uint32("noise_seed", *keys)
 
-spot_texture_generator=ox.OxideSpotTextureGenerator(
-    cylinder_noise= ox.CylinderNoise(
-        ox.perlin_noise_gen(noise_seed)
-    ),
+spot_texture_generator = ox.OxideSpotTextureGenerator(
+    cylinder_noise=ox.CylinderNoise(ox.perlin_noise_gen(noise_seed)),
 )
 
-rn = 10 # rod_number for plotting
-_,axs  =plt.subplots(1,rn,figsize = (20,10))
-for i,ax in enumerate(axs):
+rn = 10  # rod_number for plotting
+_, axs = plt.subplots(1, rn, figsize=(20, 10))
+for i, ax in enumerate(axs):
     j = i
     i = 0
-    rcx = rod_center_x + (rod_radius*i)
-    rcy = rod_center_y + (rod_radius*i)
-    
+    rcx = rod_center_x + (rod_radius * i)
+    rcy = rod_center_y + (rod_radius * i)
+
     texture_result = spot_texture_generator.generate(
         rcx,
         rcy,
         rod_radius,
         rod_height,
         krng,
-        f'rod_{i}',
+        f"rod_{i}",
         *keys,
         noise_texture_zoom=10,
-        min_oxide_size_px = 16,
-        max_oxide_size_px = 22,
-        oxide_spots_coverage_threshold =  (j/10 *2)-1,
-        poisson_disk_radius = .04,
+        min_oxide_size_px=16,
+        max_oxide_size_px=22,
+        oxide_spots_coverage_threshold=(j / 10 * 2) - 1,
+        poisson_disk_radius=0.04,
     )
     spts = texture_result.spot_centers_all[texture_result.points_filter]
-    
-    ax.imshow(texture_result.oxide_mask)
-    ax.scatter(spts.T[0]*res_x,spts.T[1]*res_y,alpha =.3,marker='x',color = 'red')
-    ax.set_ylim(0,res_y)
-    ax.set_xlim(0,res_x)
-plt.show()
 
+    ax.imshow(texture_result.oxide_mask)
+    ax.scatter(spts.T[0] * res_x, spts.T[1] * res_y, alpha=0.3, marker="x", color="red")
+    ax.set_ylim(0, res_y)
+    ax.set_xlim(0, res_x)
+plt.show()
 ```
 
 # RENDERING
@@ -179,53 +179,62 @@ rod_radius = 4.75
 rod_count = 17
 
 inspection_scene = ss.InspectionScene(
-    nfa_spec= ss.NfaSpec.from_shape(
-        ss.RodsSquareSpec(rod_height=rod_height,column_number=rod_count,rod_radius=rod_radius),
+    nfa_spec=ss.NfaSpec.from_shape(
+        ss.RodsSquareSpec(
+            rod_height=rod_height, column_number=rod_count, rod_radius=rod_radius
+        ),
         rods_material_spec=ss.MaterialOxidizedConductorSpec(
-            conductor_spec = ss.MaterialNamedAnyConductorSpec(
-                conductor_name = "custom_Zircon",
-                rough_conductor_spec=ss.MaterialRoughConductorSpec(alpha_u=.025,alpha_v=.05)
+            conductor_spec=ss.MaterialNamedAnyConductorSpec(
+                conductor_name="custom_Zircon",
+                rough_conductor_spec=ss.MaterialRoughConductorSpec(
+                    alpha_u=0.025, alpha_v=0.05
+                ),
             ),
-            oxidation_amount = .5,
-            oxide_spots_specs = [ ss.TextureOxideSpotsSpec(oxide_spots_coverage = 0,poisson_disk_radius=.05 ) for i in range(rod_count)]
+            oxidation_amount=0.5,
+            oxide_spots_specs=[
+                ss.TextureOxideSpotsSpec(
+                    oxide_spots_coverage=0, poisson_disk_radius=0.05
+                )
+                for i in range(rod_count)
+            ],
         ),
         grids_material_spec=ss.MaterialOxidizedConductorSpec(
-            conductor_spec = ss.MaterialNamedAnyConductorSpec(
-                conductor_name = "custom_Inconel",
-                rough_conductor_spec=ss.MaterialRoughConductorSpec(alpha_u=.025,alpha_v=.05)
+            conductor_spec=ss.MaterialNamedAnyConductorSpec(
+                conductor_name="custom_Inconel",
+                rough_conductor_spec=ss.MaterialRoughConductorSpec(
+                    alpha_u=0.025, alpha_v=0.05
+                ),
             ),
-            oxidation_amount = .5,
+            oxidation_amount=0.5,
         ),
-        grids = [
+        grids=[
             ss.SpacerGridSpec(
                 z_location=0,
             )
-        ]
+        ],
     ),
-    cam_ring_spec= ss.AhlbergCameraRingSpec.single_cam_four_x_lights(field_of_view=40, light_intensity=200,light_height_offset=0),
-    env_map_spec=ss.EnvironmentMapSpec(
-        intensity_scale=1.05
+    cam_ring_spec=ss.AhlbergCameraRingSpec.single_cam_four_x_lights(
+        field_of_view=40, light_intensity=200, light_height_offset=0
     ),
-    medium_spec = ss.HeterogenousMediumSpec(
-        albedo=ss.MaterialBSDFSpec(r=0.3,g=0.5,b=0.5) ,
+    env_map_spec=ss.EnvironmentMapSpec(intensity_scale=1.05),
+    medium_spec=ss.HeterogenousMediumSpec(
+        albedo=ss.MaterialBSDFSpec(r=0.3, g=0.5, b=0.5),
         hg_phase_g=0.6,
-        scale = .001,
+        scale=0.001,
         volume_spec=ss.MediumRandomGridVolumeSpec(
-            resolution= 64,
-            cube_width=1000,
-            heterogenity_noise_max=.1
+            resolution=64, cube_width=1000, heterogenity_noise_max=0.1
         ),
-    )
+    ),
 )
 
-mitsuba_scene = ml.MitsubaScene.from_inspection_scene(inspection_scene,krng,['test'])
+mitsuba_scene = ml.MitsubaScene.from_inspection_scene(inspection_scene, krng, ["test"])
 ```
 
 ```python
-render_res = mitsuba_scene.render(spp=32,rodgrid_labels=True,oxide_labels = True)
+render_res = mitsuba_scene.render(spp=32, rodgrid_labels=True, oxide_labels=True)
 
-rod_labels,grid_mask = ml.unsafe_read_labels(render_res.label_instances)
-_,axs = plt.subplots(1,4,figsize = (20,10))
+rod_labels, grid_mask = ml.unsafe_read_labels(render_res.label_instances)
+_, axs = plt.subplots(1, 4, figsize=(20, 10))
 axs[0].imshow(render_res.raw_rgba)
 axs[1].imshow(render_res.label_oxide)
 axs[2].imshow(rod_labels)

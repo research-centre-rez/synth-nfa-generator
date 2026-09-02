@@ -1,34 +1,33 @@
 # Source: https://github.com/daavoo/pyntcloud/blob/master/pyntcloud/io/ply.py
 import sys
-import numpy as np
-from pathlib import Path
 import tempfile
-import pandas as pd
 from collections import defaultdict
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
 
 sys_byteorder = (">", "<")[sys.byteorder == "little"]
 
-ply_dtypes = dict(
-    [
-        (b"int8", "i1"),
-        (b"char", "i1"),
-        (b"uint8", "u1"),
-        (b"uchar", "b1"),
-        (b"uchar", "u1"),
-        (b"int16", "i2"),
-        (b"short", "i2"),
-        (b"uint16", "u2"),
-        (b"ushort", "u2"),
-        (b"int32", "i4"),
-        (b"int", "i4"),
-        (b"uint32", "u4"),
-        (b"uint", "u4"),
-        (b"float32", "f4"),
-        (b"float", "f4"),
-        (b"float64", "f8"),
-        (b"double", "f8"),
-    ]
-)
+ply_dtypes = {
+    b"int8": "i1",
+    b"char": "i1",
+    b"uint8": "u1",
+    #        b"uchar": "b1",
+    b"uchar": "u1",
+    b"int16": "i2",
+    b"short": "i2",
+    b"uint16": "u2",
+    b"ushort": "u2",
+    b"int32": "i4",
+    b"int": "i4",
+    b"uint32": "u4",
+    b"uint": "u4",
+    b"float32": "f4",
+    b"float": "f4",
+    b"float64": "f8",
+    b"double": "f8",
+}
 
 valid_formats = {"ascii": "", "binary_big_endian": ">", "binary_little_endian": "<"}
 
@@ -233,8 +232,7 @@ def write_ply(filename, points=None, mesh=None, as_text=False, comments=None):
 
         header.append("end_header")
 
-        for line in header:
-            ply.write("%s\n" % line)
+        ply.writelines(f"{line}\n" for line in header)
 
     if as_text:
         if points is not None:
@@ -315,4 +313,3 @@ def save_mesh_to_temp(mesh):
     mesh_path = str(temp_dir / "grid.ply")
     mesh.write_ply(mesh_path)
     return mesh_path
-

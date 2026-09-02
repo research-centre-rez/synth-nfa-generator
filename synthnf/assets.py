@@ -8,8 +8,8 @@ assets_path = (
 )
 
 mitsuba_materials_w_description = {
-    "custom_Zircon":"this is my custom zirconium",
-    "custom_Porcelain":"custom porcelain (some oxides look like that)",
+    "custom_Zircon": "this is my custom zirconium",
+    "custom_Porcelain": "custom porcelain (some oxides look like that)",
     "a-C": "Amorphous carbon",
     "Na_palik": "Sodium",
     "Ag": "Silver",
@@ -55,8 +55,8 @@ env_map_names = (
     "future_restaurant.hdr",
     "garage4_hd.hdr",
     "metro_the_pit.hdr",
-    #"tabbaco_plant.hdr", # too dark in default
-    "techgate_overcast.hdr", # this one is good
+    # "tabbaco_plant.hdr", # too dark in default
+    "techgate_overcast.hdr",  # this one is good
     "tungsten_evening.hdr",
     "tunnel_machine.hdr",
     "uprat5_hd.hdr",
@@ -69,5 +69,5 @@ env_map_names = (
 
 
 def get_asset_path(filepath):
-    p = Path('..')/'assets'/filepath
+    p = Path("..") / "assets" / filepath
     return str(p.absolute())

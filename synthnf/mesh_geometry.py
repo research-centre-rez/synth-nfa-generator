@@ -1,8 +1,11 @@
-import synthnf.ply as ply
 import warnings
-import numpy as np
-import mitsuba as mi
+
 import drjit as dr
+import mitsuba as mi
+import numpy as np
+
+from synthnf import ply
+
 
 def spacer_grid(
     tooth_path,
@@ -10,24 +13,24 @@ def spacer_grid(
     rod_width_mm,
     gap_width_mm,
     material,
-    is_hexagon:bool,
-):    
+    is_hexagon: bool,
+):
     tooth_ply = ply.read_ply(tooth_path)
 
     x_min = np.min(tooth_ply["points"]["x"])
     x_max = np.max(tooth_ply["points"]["x"])
 
     # this should be 1, if not rescale by dividing
-    # the goal is to make sure that the tooth rescales 
-    width = (x_max - x_min)    
-    scale = (rod_width_mm + gap_width_mm)/width
-    
+    # the goal is to make sure that the tooth rescales
+    width = x_max - x_min
+    scale = (rod_width_mm + gap_width_mm) / width
+
     tooth_ply["points"]["x"] = tooth_ply["points"]["x"] * scale
     tooth_ply["points"]["y"] = tooth_ply["points"]["y"] * scale
     tooth_ply["points"]["z"] = tooth_ply["points"]["z"] * scale
 
     grid_mesh = create_grid_mesh_from_tooth(
-        tooth_ply, rods_per_face, rod_width_mm, gap_width_mm,is_hexagon
+        tooth_ply, rods_per_face, rod_width_mm, gap_width_mm, is_hexagon
     )
 
     grid_mesh_path = ply.save_mesh_to_temp(grid_mesh)
@@ -35,13 +38,8 @@ def spacer_grid(
     return {"type": "ply", "filename": grid_mesh_path, "material": material}
 
 
-
 def create_grid_mesh_from_tooth(
-    tooth_mesh_data, 
-    rod_count, 
-    rod_width_mm, 
-    rod_gap_width_mm,
-    is_hexagon:bool
+    tooth_mesh_data, rod_count, rod_width_mm, rod_gap_width_mm, is_hexagon: bool
 ):
     p_x, p_y, p_z, v_1, v_2, v_3, n_x, n_y, n_z = ply.decompose_ply(tooth_mesh_data)
 
@@ -56,17 +54,17 @@ def create_grid_mesh_from_tooth(
     grid_info = p_x, p_y, p_z, v_1, v_2, v_3, n_x, n_y, n_z
 
     distance = -grid_dist_from_center(rod_count, rod_width_mm, rod_gap_width_mm)
-    warnings.warn('warning doing some shaningens here')
-    distance+=73
+    warnings.warn("warning doing some shaningens here")
+    distance += 73
 
     # UV mapping
     u = 1 - _norm(p_x)  # It was arraye'd left so uv mapping is reversed
     v = _norm(p_z)
-    
+
     p_x, p_y, p_z, v_1, v_2, v_3, n_x, n_y, n_z, u, v = array_general(
-        distance, p_x, p_y, p_z, v_1, v_2, v_3, n_x, n_y, n_z, u, v,is_hexagon
+        distance, p_x, p_y, p_z, v_1, v_2, v_3, n_x, n_y, n_z, u, v, is_hexagon
     )
-    px, py, pz, *_ = grid_info
+    px, _py, _pz, *_ = grid_info
 
     min_px_idc = np.squeeze(np.argwhere(px == np.min(px)))
     left_pz = p_z[min_px_idc]
@@ -88,14 +86,14 @@ def create_grid_mesh_from_tooth(
     return compose_mesh(p_x, p_y, p_z, v_1, v_2, v_3, n_x, n_y, n_z, u, v)
 
 
-def array_general(dist, p_x, p_y, p_z, v_1, v_2, v_3, n_x, n_y, n_z, u, v,is_hexagon):
+def array_general(dist, p_x, p_y, p_z, v_1, v_2, v_3, n_x, n_y, n_z, u, v, is_hexagon):
     if is_hexagon:
         deg = 60
         n_sides = 6
     else:
         deg = 90
         n_sides = 4
-        
+
     n_points = len(p_x)
     p_x = p_x - np.mean(p_x)
     p_y = p_y - np.mean(p_y) + dist
@@ -118,9 +116,9 @@ def array_general(dist, p_x, p_y, p_z, v_1, v_2, v_3, n_x, n_y, n_z, u, v,is_hex
 
     p_z = np.concatenate([p_z] * n_sides)
 
-    v_1 = np.concatenate([v_1 + n_points * i for i in range(0, n_sides)])
-    v_2 = np.concatenate([v_2 + n_points * i for i in range(0, n_sides)])
-    v_3 = np.concatenate([v_3 + n_points * i for i in range(0, n_sides)])
+    v_1 = np.concatenate([v_1 + n_points * i for i in range(n_sides)])
+    v_2 = np.concatenate([v_2 + n_points * i for i in range(n_sides)])
+    v_3 = np.concatenate([v_3 + n_points * i for i in range(n_sides)])
 
     # UV recalc
     v = np.tile(v, n_sides)
@@ -140,7 +138,6 @@ def array_general(dist, p_x, p_y, p_z, v_1, v_2, v_3, n_x, n_y, n_z, u, v,is_hex
     u = np.concatenate([u * u_part_hex + 1 / n_sides for i in range(n_sides)])
 
     return p_x, p_y, p_z, v_1, v_2, v_3, n_x, n_y, n_z, u, v
-
 
 
 def compose_mesh(
@@ -172,6 +169,7 @@ def compose_mesh(
 
     return mesh
 
+
 def fill_borders(
     p_x, p_y, p_z, v_1, v_2, v_3, n_x, n_y, n_z, u, v, left_indices, right_indices
 ):
@@ -180,7 +178,7 @@ def fill_borders(
     stich_v1 = []
     stich_v2 = []
     stich_v3 = []
-    for l, r in zip(left_indices, right_indices):  # noqa: E741
+    for l, r in zip(left_indices, right_indices):
         for a, b, c in zip(l, l[1:], r):
             stich_v1.append(a)
             stich_v2.append(b)
@@ -199,7 +197,7 @@ def fill_borders(
     n_y = n_y.copy()
 
     # fix normals with averaged normals
-    for l, r in zip(left_indices, right_indices):  # noqa: E741
+    for l, r in zip(left_indices, right_indices):
         n_x[l] = (n_x[l] + n_x[r]) / 2
         n_x[r] = n_x[l]
 
@@ -247,9 +245,9 @@ def array_left(p_x, p_y, p_z, v_1, v_2, v_3, n_x, n_y, n_z, n=1, width=None):
     p_y = np.concatenate([p_y] * (n + 1))
     p_z = np.concatenate([p_z] * (n + 1))
 
-    v_1 = np.concatenate([v_1 + n_points * i for i in range(0, n + 1)])
-    v_2 = np.concatenate([v_2 + n_points * i for i in range(0, n + 1)])
-    v_3 = np.concatenate([v_3 + n_points * i for i in range(0, n + 1)])
+    v_1 = np.concatenate([v_1 + n_points * i for i in range(n + 1)])
+    v_2 = np.concatenate([v_2 + n_points * i for i in range(n + 1)])
+    v_3 = np.concatenate([v_3 + n_points * i for i in range(n + 1)])
 
     n_x = np.concatenate([n_x] * (n + 1))
     n_y = np.concatenate([n_y] * (n + 1))
@@ -266,8 +264,6 @@ def rotate_2d(deg, points):
 
     rot = np.array([[c, s], [-s, c]])
     return np.dot(rot, points)
-
-
 
 
 def grid_dist_from_center(visible_rod_count, rod_width_mm, gap_between_rods_width_mm):

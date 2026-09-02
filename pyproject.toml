@@ -98,3 +98,11 @@ addopts = "-ra -q"
 #    "tests",
 #    "integration",
 #]
+[tool.ruff]
+line-length = 88
+[tool.ruff.lint]
+extend-select = ["I"]
+ignore = [
+"DTZ005",
+"RUF009"
+]
