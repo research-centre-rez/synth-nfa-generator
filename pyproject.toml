@@ -52,8 +52,9 @@ dependencies = [
   "pandas",
   "scipy",
   "scikit-image",
-  "bezier",
-  "perlin-numpy@git+https://github.com/jaroslavknotek/perlin-numpy.git"
+  "opencv-python-headless",
+  "pyfastnoiselite",
+  
 ]
 
 # List additional groups of dependencies here (e.g. development
@@ -97,3 +98,11 @@ addopts = "-ra -q"
 #    "tests",
 #    "integration",
 #]
+[tool.ruff]
+line-length = 88
+[tool.ruff.lint]
+extend-select = ["I"]
+ignore = [
+"DTZ005",
+"RUF009"
+]
