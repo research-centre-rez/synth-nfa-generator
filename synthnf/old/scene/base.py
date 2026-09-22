@@ -27,7 +27,8 @@ def render_scene(
     seed=789, 
     clip=False, 
     alpha=True, 
-    denoise=False
+    denoise=False,
+    raw = False,
 ):
     logger.debug("Rendering START")
 
@@ -36,6 +37,9 @@ def render_scene(
     logger.debug("Rendering scene")
     img = mi.render(scene, spp=spp, seed=seed)
 
+    if raw:
+        return img
+    
     if alpha:
         mode = mi.Bitmap.PixelFormat.RGBA
     else:

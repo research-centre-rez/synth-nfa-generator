@@ -1,7 +1,8 @@
 import numpy as np
 import mitsuba as mi
 import synthnf.config.defaults as defaults
-
+import numpy.typing as npt
+from dataclasses import dataclass
 
 def create_fa_mesh(
     rod_curves,
@@ -10,6 +11,7 @@ def create_fa_mesh(
     rod_height_mm=None,
     z_displacement=None,
     num_textures=None,
+    cylinder_segments = 32,
 ):
     if z_displacement is None:
         z_displacement = 0
@@ -22,7 +24,7 @@ def create_fa_mesh(
         num_textures = len(rod_curves)
 
     rod_vertices_faces = [
-        get_rod_geometry(100, 32, rod_width_mm / 2, curve, height=rod_height_mm)
+        get_rod_geometry(100, cylinder_segments, rod_width_mm / 2, curve, height=rod_height_mm)
         for curve in rod_curves
     ]
 
@@ -130,6 +132,23 @@ def get_rod_geometry(rod_segments, cylinder_faces, radius=1, curve=None, height=
     return vertices, faces, uv
 
 
+@dataclass
+class RodCenters:
+    centers:npt.NDArray
+    rods_per_face:int
+
+    def face_rods_idcs(self,face_num:int):
+        if not (0 < face_num <= 6):
+            raise ValueError("Face Number is not in 1,2 ... 6")
+
+        start_rod = (self.rods_per_face - 1)* (face_num-1)
+        rod_ids = np.arange(start_rod,start_rod+self.rods_per_face)
+        if face_num==6:
+            rod_ids[-1] = 0
+        
+        return rod_ids
+    
+
 def generate_rod_centers_hexagon(
     rods_per_face=None, rod_width_mm=None, rod_gap_mm=None, outern_layers=None
 ):
@@ -173,7 +192,7 @@ def generate_rod_centers_hexagon(
 
         rc = np.vstack(rc)
         rod_centers = np.vstack([rod_centers, rc])
-    return rod_centers
+    return RodCenters(rod_centers,rods_per_face)
 
 
 def generate_rod_centers(*args, **kwargs):

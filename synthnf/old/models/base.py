@@ -79,6 +79,45 @@ def fuel_rods(
 
     return {"type": "ply", "filename": mesh_path, "material": material}
 
+# def fuel_rods_ind(
+#     rod_centers=None,
+#     rod_width_mm=None,
+#     rod_height_mm=None,
+#     gap_width_mm=None,
+#     curves_rod=None,
+#     material=None,
+#     n_textures=None,
+#     z_displacement=None,
+# ):
+#     rod_width_mm = rod_width_mm or defaults.blueprints.fuel_rod.width_mm
+#     rod_height_mm = rod_height_mm or defaults.blueprints.fuel_rod.height_mm
+#     gap_width_mm = gap_width_mm or defaults.blueprints.fuel_rod.gap_mm
+#     rod_centers = (
+#         rod_centers
+#         if rod_centers is not None
+#         else frm.generate_rod_centers(
+#             rod_width_mm=rod_width_mm, rod_gap_mm=gap_width_mm
+#         )
+#     )
+
+#     if curves_rod is None:
+#         c = curves.straight_curve(to_z=rod_height_mm)
+#         curves_rod = [c] * len(rod_centers)
+
+#     mesh = frm.create_fa_mesh(
+#         curves_rod,
+#         rod_centers,
+#         rod_width_mm,
+#         rod_height_mm,
+#         num_textures=n_textures,
+#         z_displacement=z_displacement,
+#     )
+
+#     mesh_path = io.save_mesh_to_temp(mesh)
+#     material = material or mat.zirconium_blend()
+
+#     return {"type": "ply", "filename": mesh_path, "material": material}
+
 
 def rod_tips(
     rod_width_mm=None,

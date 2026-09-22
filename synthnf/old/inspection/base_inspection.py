@@ -74,6 +74,7 @@ class FAInspection:
         self, 
         cam_z, 
         face_num,
+        object_masks=False,
         ):
         scene_dict = scene.inspection_dict(
             cam_z=cam_z, 
@@ -91,6 +92,21 @@ class FAInspection:
             scene_dict[key] = g.copy()
 
         model_keys = ["tips", "butts", "model", *keys]
+
+        if object_masks:
+            integrator = scene_dict['integrator']
+            aovs = {
+                'type': 'aov',
+                #'aovs':'xx:shape_index',
+                'aovs':'xx:prim_index',
+                'my_image': {
+                    'type': 'path',
+                },
+                'integrator': integrator,
+            }
+            scene_dict['integrator'] = aovs
+            scene_dict['sensor']['film']['rfilter']['type'] = 'box'
+            
         return scene_dict, model_keys
 
     def _swing_fa(self, scene_dict, model_keys, swing_deg_xz, swing_deg_xy):
@@ -109,6 +125,17 @@ class FAInspection:
         self._swing_fa(scene_dict, model_keys, swing_deg_xz, swing_deg_xy)
 
         return scene.render_scene(scene_dict, spp=spp, alpha=False, denoise=True)
+
+    def render_mask(self,cam_z,face_num=1):
+        spp = 1
+        scene_dict, model_keys = self._prepare_scene_dict(cam_z, face_num, object_masks = True)
+        t = cam_z / self.fa_height_mm
+        swing_deg_xz, swing_deg_xy = self.simulation.pendulum_swing_in_time(t)
+        self._swing_fa(scene_dict, model_keys, swing_deg_xz, swing_deg_xy)
+
+        
+        return scene.render_scene(scene_dict, spp=1, raw=True)
+        
 
     def render_video(
         self, 
