@@ -3,9 +3,10 @@ from pathlib import Path
 assets_path = (
     Path(
         __file__,
-    ).parent
-    / "../../assets"
+    ).parent.parent
+    / "assets"
 )
+assert assets_path.exists(), f"assets path {assets_path} not found"
 
 mitsuba_materials_w_description = {
     "custom_Zircon": "this is my custom zirconium",
@@ -69,5 +70,5 @@ env_map_names = (
 
 
 def get_asset_path(filepath):
-    p = Path("..") / "assets" / filepath
+    p = assets_path / filepath
     return str(p.absolute())

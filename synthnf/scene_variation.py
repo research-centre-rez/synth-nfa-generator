@@ -22,7 +22,7 @@ class KeyedRNG:
 
     def uint32(self, *keys) -> int:
         return stable_hash(self.root_seed, *keys, digest_size=8) % (2**32)
-    
+
     def int32(self, *keys) -> int:
         u32 = stable_hash(self.root_seed, *keys, digest_size=8) % (2**32)
         return u32 - (2**31)
@@ -107,7 +107,7 @@ class ChoiceVariationParams:
     # todo weights
 
     def sample(self, base, krng, *keys):
-        if self.options == 0:
+        if len(self.options) == 0:
             return base
         return krng.choice(self.options, krng, *keys)
 

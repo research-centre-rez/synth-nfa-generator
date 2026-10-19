@@ -2,16 +2,20 @@ import json
 import warnings
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import cv2
 import drjit as dr
+import imageio.v2 as imageio
 import mitsuba as mi
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import scipy.ndimage as ndi
+from tqdm.auto import tqdm
 
+import synthnf.mesh_geometry as mg
 import synthnf.oxides as ox
 import synthnf.scene_spec as ss
 import synthnf.scene_variation as sv
@@ -126,10 +130,61 @@ class MitsubaScene:
 
         return scene_dict
 
+    def render_frames(
+        self,
+        n_frames: int,
+        output_dir: Path,
+        krng: sv.KeyedRNG,
+        spp=32,
+        replace_existing=True,
+        top_down=True,
+    ):
+        scene_dict = self.to_scene_dict()
+        # box is good for denoiser, tent is not
+        scene_dict["main_camera"]["film"]["rfilter"] = {"type": "box"}
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(exist_ok=True, parents=True)
+
+        # moving parts are camera + emmiters (cam ring)
+        emitter_keys = [el.element_key for el in self.emitters]
+        moving_elements = emitter_keys + ["main_camera"]
+
+        rod_dict = self.rods[0]
+        rod_height = np.abs(
+            rod_dict.element_dict["p0"][2] - rod_dict.element_dict["p1"][2]
+        )
+        zs = np.linspace(-rod_height / 2, rod_height / 2, n_frames)
+        if top_down:  # negative z-coords points down
+            zs = np.flip(zs)
+        scene = mi.load_dict(scene_dict)
+
+        output_frames_dir = output_dir / "frames"
+        output_frames_dir.mkdir(exist_ok=True, parents=True)
+        frame_ids = np.arange(n_frames)
+        if not replace_existing:
+            valid_ids = [
+                int(p.stem) for p in output_frames_dir.glob("[0-9][0-9][0-9][0-9].png")
+            ]
+            frame_ids = np.delete(frame_ids, valid_ids)
+
+        zs = zs[frame_ids]
+        rg = render_z_moving_frames_gen(scene, zs, moving_elements, krng, spp=spp)
+
+        for i in frame_ids:
+            file_path = output_frames_dir / f"{i:04}.png"
+            if not replace_existing and file_path.exists():
+                continue
+            frame = next(rg)
+
+            img_8bit = np.uint8(frame[:, :, :3] * 255)
+            imageio.imwrite(file_path, img_8bit)
+
     def render(
-        self, spp=256, 
-        denoise=False, 
-        rodgrid_labels=False, 
+        self,
+        spp=256,
+        denoise=False,
+        rodgrid_labels=False,
         oxide_labels=False,
     ) -> RenderResult:
         scene_dict = self.to_scene_dict()
@@ -138,7 +193,7 @@ class MitsubaScene:
         label_sensor_dict = self.main_camera.to_dict()
         cam_key = next(iter(label_sensor_dict.keys()))
         label_sensor_dict[cam_key]["film"]["rfilter"] = {"type": "box"}
-        # HACK (IN A SCENE WHERE CAMERA IS SUBMERGED) removing the reference to 
+        # HACK (IN A SCENE WHERE CAMERA IS SUBMERGED) removing the reference to
         # the medium from camera will
         # result in medium not being included in rendering rods.
         if self.medium is not None and "medium_ref" in label_sensor_dict[cam_key]:
@@ -205,9 +260,7 @@ class MitsubaScene:
 
     @staticmethod
     def from_inspection_scene(inspection_scene: ss.InspectionScene, krng, *keys):
-
         nfa_spec = inspection_scene.nfa_spec
-
         material_id = "shared_rod_material"
         grids_material_id = "shared_grid_material"
         rods_material = ss.MaterialBSDFSpec()
@@ -573,7 +626,6 @@ def traverse_oxide_label_scene(
 
 # At this moment, this is recursive
 def convert_to_mitsuba_material(material_definition, material_id=None):
-
     definition = {}
 
     if isinstance(material_definition, ss.MaterialOxidizedConductorSpec):
@@ -816,9 +868,6 @@ def dump_scene_params(inspection_scene, filename):
         json.dump(scene_parameters, f)
 
 
-import synthnf.mesh_geometry as mg
-
-
 def mitsuba_grid(grid_spec, rods_shape_spec, material_id):
     tooth_ply_path = assets.get_asset_path(grid_spec.tooth_ply_filename)
     fourface_tooth_square_scene_el = mg.spacer_grid(
@@ -844,3 +893,42 @@ def mitsuba_grid(grid_spec, rods_shape_spec, material_id):
         #     "material": "Al",
         # },
     }
+
+
+def render_z_moving_frames_gen(
+    scene: mi.Scene,
+    z_coords: list[float],
+    moving_elements: list[str],
+    krng: sv.KeyedRNG,
+    *keys,
+    spp=32,
+    denoise=True,
+    progress=True,
+):
+    denoiser = None
+
+    traversed_scene = mi.traverse(scene)
+    orig_transforms = {
+        k: mi.AffineTransform4f(traversed_scene[f"{k}.to_world"].matrix)
+        for k in moving_elements
+    }
+    pbar = tqdm(total=len(z_coords), desc="Rendering", disable=not progress)
+
+    for step_z in z_coords:
+        move_trans = mi.Transform4f.translate([0, 0, float(step_z)])
+        for k in moving_elements:
+            new_to_world = move_trans @ orig_transforms[k]
+            traversed_scene[f"{k}.to_world"] = new_to_world
+
+        traversed_scene.update()
+        seed = int(np.abs(krng.int32(*keys, step_z)))
+        frame = mi.render(scene, spp=spp, seed=seed)
+        if denoise:
+            if denoiser is None:
+                res_y, res_x = frame.shape[:2]
+                denoiser = mi.OptixDenoiser(
+                    input_size=(res_x, res_y),
+                )
+            frame = denoiser(frame)
+        pbar.update(1)
+        yield dr.clip(frame, 0, 1)

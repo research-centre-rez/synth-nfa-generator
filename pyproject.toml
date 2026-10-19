@@ -44,7 +44,7 @@ classifiers = [
 ]
 
 dependencies = [
-  "mitsuba",
+  "mitsuba==3.8.0",
   "numpy",
   "matplotlib",
   "imageio",
@@ -54,7 +54,8 @@ dependencies = [
   "scikit-image",
   "opencv-python-headless",
   "pyfastnoiselite",
-  
+  "marimo>=0.25.1",
+  "pyright>=1.1.414",
 ]
 
 # List additional groups of dependencies here (e.g. development

@@ -12,33 +12,33 @@ def normalize_values(arr):
         return np.array([])
     mmin = np.nanmin(arr)
     mmax = np.nanmax(arr)
-    if mmin ==mmax:
+    if mmin == mmax:
         return np.zeros_like(arr)
 
-    return (arr-mmin)/(mmax-mmin)
-    
+    return (arr - mmin) / (mmax - mmin)
+
 
 class ScaleIndependentNoise:
     """
-    the goal of this is to bind parameters to the resolution. The frequency paramter is bound 
+    the goal of this is to bind parameters to the resolution. The frequency paramter is bound
     to the resolution this way.
 
     If you create noises with
-    noise_a) frequency = 1 and frequency_resolution = 256 
+    noise_a) frequency = 1 and frequency_resolution = 256
     noise_b) frequency = 1 and frequency_resolution = 512
 
     then noise_a(256,256) ~= noise_b(512,512)
 
     Now you can upscale, downscale the noise with a sensible setting
     """
+
     def __init__(
         self,
         seed,
-        octaves = 2,
-        lacunarity = 2,
-        frequency = 1,
-        frequency_resolution = 256,
-        
+        octaves=2,
+        lacunarity=2,
+        frequency=1,
+        frequency_resolution=256,
     ):
         self.perlin = perlin_noise_gen(
             seed,
@@ -47,7 +47,7 @@ class ScaleIndependentNoise:
             noise_lacunarity=lacunarity,
         )
         self.frequency_resolution = frequency_resolution
-        
+
     def generate_2d(
         self,
         width,
@@ -55,54 +55,52 @@ class ScaleIndependentNoise:
         normalize=True,
         shift_x=0,
         shift_y=0,
-    ): 
-        
+    ):
         xs = shift_x + np.arange(width)
         ys = shift_y + np.arange(height)
-        
-        grid_x,grid_y = np.meshgrid(xs,ys)        
-        xyz = np.float32([
-            [x,y,0] for x,y in zip(grid_x.flatten(),grid_y.flatten())
-        ])
 
-        points = self.generate_from_coords(
-            xyz,
-            normalize=normalize
+        grid_x, grid_y = np.meshgrid(xs, ys)
+        xyz = np.float32(
+            [[x, y, 0] for x, y in zip(grid_x.flatten(), grid_y.flatten())]
         )
-        
-        return points.reshape(height,width)
+
+        points = self.generate_from_coords(xyz, normalize=normalize)
+
+        return points.reshape(height, width)
 
     def generate_from_coords(
         self,
         points_2d_or_3d,
-        normalize = True,
+        normalize=True,
     ):
         """
-        Generate from coords shaped (n,2 or 3) 
+        Generate from coords shaped (n,2 or 3)
         If 2d points are provided, the z=0 is added
         Note that a point (x,y) won't produce the same results as x,y,z with z = 0
         """
         shape = points_2d_or_3d.shape
         if shape[1] == 2:
-            x,y = points_2d_or_3d.T
+            x, y = points_2d_or_3d.T
             z = np.zeros_like(x)
         elif shape[1] == 3:
-            x,y,z = points_2d_or_3d.T
+            x, y, z = points_2d_or_3d.T
         else:
-            raise ValueError(f"Invalid shape of the input array:{shape}. Expected (n,2) or (n,3)")
+            raise ValueError(
+                f"Invalid shape of the input array:{shape}. Expected (n,2) or (n,3)"
+            )
 
+        xyz = np.stack(
+            [
+                x / self.frequency_resolution,
+                y / self.frequency_resolution,
+                z / self.frequency_resolution,
+            ]
+        ).astype(np.float32)
 
-        xyz = np.stack([
-            x/self.frequency_resolution,
-            y/self.frequency_resolution,
-            z/self.frequency_resolution,
-        ]).astype(np.float32)
-            
         noise_val = self.perlin.gen_from_coords(xyz)
         if normalize:
             return normalize_values(noise_val)
         return noise_val
-
 
 
 class CylinderNoise:
@@ -146,22 +144,22 @@ class OxideSpotTextureGeneratedResult:
     spot_centers_all: npt.NDArray
     spot_probabilities_all: npt.NDArray
     spot_filters: npt.NDArray
-    spot_radii_all:npt.NDArray
-    surface_probability_texture: npt.NDArray|None = None
+    spot_radii_all: npt.NDArray
+    surface_probability_texture: npt.NDArray | None = None
     # I'd like to have parameters of the noise as well so I can recreate it
-    
-    def plot(self, ax, include_oxides = True, include_probabilities = True):
+
+    def plot(self, ax, include_oxides=True, include_probabilities=True):
         included = self.spot_centers_all[self.spot_filters]
         not_included = self.spot_centers_all[~self.spot_filters]
-        
 
         if include_oxides:
-            ax.imshow(self.oxide_mask,cmap='gray')
-        
+            ax.imshow(self.oxide_mask, cmap="gray")
+
         if include_probabilities and self.surface_probability_texture is not None:
-            ax.imshow(self.surface_probability_texture,cmap='gray',alpha = .5)
-        ax.scatter(*included.T,marker='x',c = 'r')
-        ax.scatter(*not_included.T,marker='x',c = 'orange',alpha = .3)
+            ax.imshow(self.surface_probability_texture, cmap="gray", alpha=0.5)
+        ax.scatter(*included.T, marker="x", c="r")
+        ax.scatter(*not_included.T, marker="x", c="orange", alpha=0.3)
+
 
 class OxideSpotTextureGenerator:
     def __init__(
@@ -229,9 +227,9 @@ class OxideSpotTextureGenerator:
         return OxideSpotTextureGeneratedResult(
             oxide_mask=oxide_mask,
             spot_centers_all=spot_centers,
-            surface_probabilities_all=surface_probabilities,
-            points_filter=points_filter,
-            spot_radii_all = radii,
+            spot_probabilities_all=surface_probabilities,
+            spot_filters=points_filter,
+            spot_radii_all=radii,
         )
 
 
@@ -241,11 +239,11 @@ def poisson_disk(
     hw_ratio=1,
 ):
     tall = True
-    #make sure that height weight ratio is more than 1
-    if hw_ratio<1:
-        hw_ratio = 1/hw_ratio
+    # make sure that height weight ratio is more than 1
+    if hw_ratio < 1:
+        hw_ratio = 1 / hw_ratio
         tall = False
-    
+
     hw_ratio = int(np.ceil(hw_ratio))
 
     pts_lists = []
@@ -266,24 +264,26 @@ def poisson_disk(
 
     return np.float32(pts)
 
+
 def disk_size_from_expected(
     number_of_expected,
     hw_ratio,
-    scaling_factor = 0.7783203125,
+    scaling_factor=0.7783203125,
 ):
     """
     Estimates disk size based on the expected numper of points. Estimate is based on points
     per square area. To take care about the fact it's a circle the scaling factor has been
-    empirically found out. 
+    empirically found out.
     """
     if hw_ratio < 1:
-        hw_ratio = 1/hw_ratio
+        hw_ratio = 1 / hw_ratio
     h = hw_ratio
     w = 1
-    
-    estimate = np.sqrt(w*h/number_of_expected)
+
+    estimate = np.sqrt(w * h / number_of_expected)
 
     return estimate * scaling_factor
+
 
 def perlin_noise_gen(
     seed,
@@ -303,7 +303,6 @@ def perlin_noise_gen(
 
 
 def cylinder_surface_to_3d(surf_01):
-
     t = surf_01[:, 0] * 2 * np.pi
     z_unit = surf_01[:, 1]
 

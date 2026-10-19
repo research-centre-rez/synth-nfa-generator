@@ -178,7 +178,7 @@ def fill_borders(
     stich_v1 = []
     stich_v2 = []
     stich_v3 = []
-    for l, r in zip(left_indices, right_indices):
+    for l, r in zip(left_indices, right_indices):  # noqa E741
         for a, b, c in zip(l, l[1:], r):
             stich_v1.append(a)
             stich_v2.append(b)
@@ -197,7 +197,7 @@ def fill_borders(
     n_y = n_y.copy()
 
     # fix normals with averaged normals
-    for l, r in zip(left_indices, right_indices):
+    for l, r in zip(left_indices, right_indices):  # noqa E741
         n_x[l] = (n_x[l] + n_x[r]) / 2
         n_x[r] = n_x[l]
 
