@@ -37,3 +37,6 @@ python -m ipykernel install --user --name 'synth'
 ```
 
 And run `jupyter lab` command.
+
+
+To make sure that mitsuba runs as expected, try running `minimal.py`
